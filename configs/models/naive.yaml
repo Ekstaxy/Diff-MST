@@ -48,6 +48,7 @@ model:
             n_inputs: 1
             joint_embed_shape: 512
             pretrained: true
+            sample_rate: 44100
         controller:
           class_path: mst.modules.TransformerController
           init_args:

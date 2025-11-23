@@ -1111,12 +1111,12 @@ class RobertaTextEncoder(nn.Module):
         pass
 
 class AudioEncoder(nn.Module):
-    def __init__(self):
+    def __init__(self, sample_rate: int = 44100):
         super().__init__()
         self.mel_encoder = create_htsat_model()
         self.spatial_encoder = SELDModel()
         self.resampler = torchaudio.transforms.Resample(
-            orig_freq = 16000,
+            orig_freq = sample_rate,
             new_freq = 48000,
         )
 
@@ -1153,6 +1153,7 @@ class SpatialCLAPEncoder(nn.Module):
         n_inputs: int = 1,
         joint_embed_shape: int = 512,
         pretrained: bool = True,
+        sample_rate: int = 44100,
         **kwargs
     ):
         super().__init__()
@@ -1160,7 +1161,7 @@ class SpatialCLAPEncoder(nn.Module):
         self.embed_dim = embed_dim
         self.joint_embed_shape = joint_embed_shape
 
-        self.audio_encoder = AudioEncoder()
+        self.audio_encoder = AudioEncoder(sample_rate=sample_rate)
         self.audio_projection = nn.Sequential(
             nn.Linear(self.audio_encoder.get_output_dim(), joint_embed_shape),
             nn.ReLU(),
@@ -1187,7 +1188,7 @@ class SpatialCLAPEncoder(nn.Module):
         if url is None:
             url = "https://huggingface.co/sarulab-speech/SpatialCLAP/resolve/main/ckpt/l1proposed-spatial_contrastive-model_epoch_49.pt"
         ckpt = torch.hub.load_state_dict_from_url(url, map_location="cpu")["model_state_dict"]
-        self.load_state_dict(ckpt)
+        self.load_state_dict(ckpt, strict=False)
 
     def embed_audio(self, x):
         encoded = self.audio_encoder(x)
