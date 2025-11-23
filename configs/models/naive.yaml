@@ -34,13 +34,20 @@ model:
             n_fft: 2048
             hop_length: 512
             input_batchnorm: false
-        mix_encoder: 
-          class_path: mst.modules.SpectrogramEncoder
+        # mix_encoder: 
+        #   class_path: mst.modules.SpectrogramEncoder
+        #   init_args:
+        #     embed_dim: 512
+        #     n_fft: 2048
+        #     hop_length: 512
+        #     input_batchnorm: false
+        mix_encoder:
+          class_path: mst.modules.SpatialCLAPEncoder
           init_args:
             embed_dim: 512
-            n_fft: 2048
-            hop_length: 512
-            input_batchnorm: false
+            n_inputs: 1
+            joint_embed_shape: 512
+            pretrained: true
         controller:
           class_path: mst.modules.TransformerController
           init_args:

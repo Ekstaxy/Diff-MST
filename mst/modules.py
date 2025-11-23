@@ -1,8 +1,18 @@
 import math
 import torch
+import torch.nn as nn
+import torch.functional as F
+import numpy as np
+
 from typing import Callable, Optional, List
 from torchaudio.pipelines import HDEMUCS_HIGH_MUSDB_PLUS
 from mst.panns import Cnn14
+
+# For Spatial-CLAP and CLAP
+from htsat import create_htsat_model
+from transformers import RobertaModel, RobertaTokenizer
+from msclap import CLAP
+import torchaudio
 
 from dasp_pytorch.functional import (
     gain,
@@ -591,22 +601,22 @@ class ParameterProjector(torch.nn.Module):
         return track_params, fx_bus_params, master_bus_params
 
 
-class WaveformEncoder(torch.nn.Module):
+# class WaveformEncoder(torch.nn.Module):
 
-    def __init__(
-        self,
-        n_inputs=1,
-        embed_dim: int = 1024,
-        encoder_batchnorm: bool = True,
-    ):
-        super().__init__()
-        self.n_inputs = n_inputs
-        self.embed_dim = embed_dim
-        self.encoder_batchnorm = encoder_batchnorm
-        self.model = TCN(n_inputs, embed_dim)
+#     def __init__(
+#         self,
+#         n_inputs=1,
+#         embed_dim: int = 1024,
+#         encoder_batchnorm: bool = True,
+#     ):
+#         super().__init__()
+#         self.n_inputs = n_inputs
+#         self.embed_dim = embed_dim
+#         self.encoder_batchnorm = encoder_batchnorm
+#         self.model = TCN(n_inputs, embed_dim)
 
-    def forward(self, x: torch.Tensor):
-        return self.model(x)
+#     def forward(self, x: torch.Tensor):
+#         return self.model(x)
 
 
 class PositionalEncoding(torch.nn.Module):
@@ -912,3 +922,335 @@ class TransformerController(torch.nn.Module):
         )
 
         return pred_track_params, pred_fx_bus_params, pred_master_bus_params
+    
+class SELDEncoder(nn.Module):
+    def __init__(self, input_channels=2, cnn_channels=64, middle_features=128, output_features=256, n_fft=1024):
+        """
+        input_channels: 入力チャンネル数（ここでは4）
+        cnn_channels (P): CNNの中間フィルタ数
+        output_features (Q): 最終的な特徴量次元
+        """
+        super(SELDEncoder, self).__init__()
+        assert (output_features % 2) == 0
+        self.output_features = output_features
+
+        self.cnn_block = nn.Sequential(
+            nn.Conv2d(input_channels, cnn_channels, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(cnn_channels),
+            nn.MaxPool2d(kernel_size=(1, 2)),
+
+            nn.Conv2d(cnn_channels, cnn_channels, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(cnn_channels),
+            nn.MaxPool2d(kernel_size=(1, 2)),
+
+            nn.Conv2d(cnn_channels, cnn_channels, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(cnn_channels),
+            nn.MaxPool2d(kernel_size=(1, 2)),
+        )
+
+        # CNN出力のfreq次元の縮小を正しく計算
+        self.freq_after_cnn = (n_fft // 2) // (2 ** 3)  # (n_fft/2)を3回半分にする
+        self.middle_linear = nn.Linear(cnn_channels * self.freq_after_cnn, middle_features)
+
+        self.gru = nn.GRU(
+            input_size=middle_features,
+            hidden_size=output_features // 2,
+            num_layers=2,
+            batch_first=True,
+            bidirectional=True
+        )
+        
+    def forward(self, x):
+        """
+        x: (batch, time_frames, freq_bins, channels=2)
+        returns: (batch, time_frames, output_features=Q)
+        """
+        batch_size, time_frames, freq_bins, channels = x.shape
+
+        # Prepare for CNN: permute to (batch, 2 * channels, time, freq)
+        x = x.permute(0, 3, 1, 2)  # (batch, 2 * channels, time, freq)
+
+        # CNN
+        x = self.cnn_block(x)  # (batch, cnn_channels, time, reduced_freq)
+
+        batch_size, cnn_channels, time_steps, freq_bins_reduced = x.size()
+
+        # Prepare for linear layer
+        x = x.permute(0, 2, 1, 3).contiguous()  # (batch, time_steps, channels, freq_bins_reduced)
+        x = x.view(batch_size, time_steps, -1)  # (batch, time_steps, channels * freq_bins_reduced)
+
+        # Project to output_features dimension (Q)
+        x = self.middle_linear(x)  # (batch, time_steps, middle_features)
+
+        x, _ = self.gru(x)          # (batch, time_steps, output_features)
+        x = torch.mean(x, dim=1)
+
+        return x
+    
+class FeatureExtractor(nn.Module):
+    def __init__(self, input_ch=2, n_fft=1024, hop_length=512):
+        super(FeatureExtractor, self).__init__()
+        self.input_ch = input_ch
+        self.n_fft = n_fft
+        self.hop_length = hop_length
+        self.register_buffer('window', torch.hann_window(n_fft))
+
+    def forward(self, x):
+        """
+        x: (batch, channels=2, time)
+        returns: (batch, channels=2, time_frames, freq_bins)
+        """
+        batch_size, channels, time_len = x.shape
+        assert channels == self.input_ch, "Input must have 2 channels!"
+
+        # (batch, channels, time) -> (batch * channels, time)
+        x = x.view(batch_size * channels, time_len)
+
+        stft_output = torch.stft(
+            x, n_fft=self.n_fft, hop_length=self.hop_length,
+            window=self.window, return_complex=True
+        )  # (batch, channels, freq_bins, time_frames)
+        stft_output = stft_output.view(batch_size, channels, *stft_output.shape[-2:])  # (batch, channels, freq_bins, time_frames)
+
+        # Separate magnitude and phase
+        magnitude = torch.abs(stft_output)  # (batch, channels, freq_bins, time_frames)
+        phase = torch.angle(stft_output)    # (batch, channels, freq_bins, time_frames)
+
+        # Permute to (batch, time_frames, freq_bins, channels)
+        magnitude = magnitude.permute(0, 3, 2, 1)  # (batch, time_frames, freq_bins, channels)
+        phase = phase.permute(0, 3, 2, 1)
+
+        # Concatenate magnitude and phase along channel axis
+        features = torch.cat([magnitude, phase], dim=-1)  # (batch, time_frames, freq_bins, 2*channels)
+
+        return features
+
+class SELDModel(nn.Module):
+    def __init__(self,
+                 input_ch=2,
+                 n_fft=1024,
+                 hop_length=512,
+                 num_classes=10):
+        super(SELDModel, self).__init__()
+
+        self.feature_extractor = FeatureExtractor(n_fft=n_fft, hop_length=hop_length)
+        self.encoder = SELDEncoder(input_channels=self.feature_extractor.input_ch*2)
+        
+    def forward(self, x):
+        """
+        x: (batch, channels=2, time)
+        returns:
+          - sed_output: (batch, time, num_classes)
+          - doa_output: (batch, time, num_classes*3)
+        """
+        features = self.feature_extractor(x)  # (batch, time, freq, ch)
+        encoded = self.encoder(features)      # (batch, encoder_output_size)
+
+        return encoded
+
+    def load_from_pretrained(self, path):
+        params = {
+          k:v for k,v in (torch.load(path, weights_only=True)["model_state_dict"]).items()
+          if not k.startswith("decoder")
+        }
+        self.load_state_dict(params)
+
+    def load_default_state_dict(self):
+        ckpt_path = "pretrain_spatial_encoder/output/ckpt/model_epoch_49.pt"
+        self.load_from_pretrained(ckpt_path)
+
+class RobertaTextEncoder(nn.Module):
+    def __init__(self, joint_embed_dim=512, mlp_act='relu'):
+        super().__init__()
+        self.roberta = RobertaModel.from_pretrained("roberta-base")
+        self.tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
+
+        self.input_dim = 768  # fixed for roberta-base
+        self.joint_embed_dim = joint_embed_dim
+
+        if mlp_act == 'relu':
+            act_layer = nn.ReLU()
+        elif mlp_act == 'gelu':
+            act_layer = nn.GELU()
+        else:
+            raise NotImplementedError(f"Unsupported activation: {mlp_act}")
+
+        self.text_projection = nn.Sequential(
+            nn.Linear(self.input_dim, joint_embed_dim),
+            act_layer,
+            nn.Linear(joint_embed_dim, joint_embed_dim)
+        )
+
+    def forward(self, texts: List[str]):
+        """
+        text: dictionary with keys "input_ids" and "attention_mask"
+        Returns: normalized embedding of shape [batch_size, joint_embed_dim]
+        """
+        tokenized = self.tokenizer(
+            texts,
+            padding=True,
+            return_tensors="pt"
+        )
+        text = {
+            key: value.to(next(self.parameters()).device)
+            for key, value in tokenized.items()
+        }
+        
+        x = self.roberta(
+            input_ids=text["input_ids"],
+            attention_mask=text["attention_mask"]
+        )["pooler_output"]
+        x = self.text_projection(x)
+        x = nn.functional.normalize(x, dim=-1)
+        return x
+
+    def load_default_state_dict(self):
+        pass
+
+class AudioEncoder(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.mel_encoder = create_htsat_model()
+        self.spatial_encoder = SELDModel()
+        self.resampler = torchaudio.transforms.Resample(
+            orig_freq = 16000,
+            new_freq = 48000,
+        )
+
+        self.mel_feature_dim = 1024
+        self.spatial_feature_dim = 256
+    
+    def get_output_dim(self):
+        return self.mel_feature_dim + self.spatial_feature_dim
+
+    def load_default_state_dict(self):
+        self.mel_encoder.load_default_state_dict()
+        self.spatial_encoder.load_default_state_dict()
+
+    def forward(self, x):
+        B = len(x)
+
+        mel_encoded = self.mel_encoder({
+            "waveform": self.resampler((x[:, 0, :] + x[:, 1, :]) / 2)
+        })["embedding"]
+        assert mel_encoded.shape == (B, self.mel_feature_dim), f"{mel_encoded.shape=}"
+
+        spatial_encoded = self.spatial_encoder(x)
+        assert spatial_encoded.shape == (B, self.spatial_feature_dim), f"{spatial_encoded.shape=}"
+
+        return torch.cat(
+            [mel_encoded, spatial_encoded],
+            dim=1
+        )
+
+class SpatialCLAPEncoder(nn.Module):
+    def __init__(
+        self,
+        embed_dim: int = 512,
+        n_inputs: int = 1,
+        joint_embed_shape: int = 512,
+        pretrained: bool = True,
+        **kwargs
+    ):
+        super().__init__()
+        
+        self.embed_dim = embed_dim
+        self.joint_embed_shape = joint_embed_shape
+
+        self.audio_encoder = AudioEncoder()
+        self.audio_projection = nn.Sequential(
+            nn.Linear(self.audio_encoder.get_output_dim(), joint_embed_shape),
+            nn.ReLU(),
+            nn.Linear(joint_embed_shape, joint_embed_shape),
+        )
+
+        self.text_encoder = RobertaTextEncoder()
+        self.text_projection = nn.Sequential(
+            nn.Linear(512, joint_embed_shape),
+            nn.ReLU(),
+            nn.Linear(joint_embed_shape, joint_embed_shape),
+        )
+
+        self.logit_scale = nn.Parameter(torch.tensor(np.log(1 / (0.07))))
+
+        if pretrained:
+            self.load_pretrained()
+
+    def load_default_state_dict(self):
+        self.audio_encoder.load_default_state_dict()
+        self.text_encoder.load_default_state_dict()
+
+    def load_pretrained(self, url=None):
+        if url is None:
+            url = "https://huggingface.co/sarulab-speech/SpatialCLAP/resolve/main/ckpt/l1proposed-spatial_contrastive-model_epoch_49.pt"
+        ckpt = torch.hub.load_state_dict_from_url(url, map_location="cpu")["model_state_dict"]
+        self.load_state_dict(ckpt)
+
+    def embed_audio(self, x):
+        encoded = self.audio_encoder(x)
+        projected_encoded = self.audio_projection(encoded)
+        return F.normalize(projected_encoded, dim=-1)
+    
+    def embed_text(self, x):
+        encoded = self.text_encoder(x)
+        projected_encoded = self.text_projection(encoded)
+        return F.normalize(projected_encoded, dim=-1)
+
+    def forward(self, x: torch.Tensor, text=None):
+        """
+        Args:
+            x (torch.Tensor): Audio waveform of shape (bs, chs, seq_len)
+            text (Optional): Text input
+        """
+        z_audio = None
+        if x is not None:
+            bs, chs, seq_len = x.size()
+            
+            # Ensure stereo input for AudioEncoder
+            if chs == 1:
+                x_input = x.repeat(1, 2, 1)
+            elif chs >= 2:
+                x_input = x[:, :2, :]
+            else:
+                raise ValueError(f"Invalid number of channels: {chs}")
+                
+            z_audio = self.embed_audio(x_input)
+
+        if text is not None:
+            z_text = self.embed_text(text)
+            return {
+                "audio": z_audio,
+                "text": z_text,
+            }
+        
+        return z_audio
+
+class CLAPEncoder(nn.Module):
+    def __init__(self, version='2023', use_cuda=True):
+        super().__init__()
+        self.model = CLAP(version=version, use_cuda=use_cuda)
+        
+    def forward(self, audio_paths=None, text=None):
+        """
+        Args:
+            audio_paths: List of file paths to audio files
+            text: List of text strings
+        Returns:
+            Dictionary with audio_embeddings and/or text_embeddings
+        """
+        result = {}
+        
+        if audio_paths is not None:
+            # Get audio embeddings
+            audio_embeddings = self.model.get_audio_embeddings(audio_paths)
+            result['audio_embeddings'] = audio_embeddings
+            
+        if text is not None:
+            # Get text embeddings
+            text_embeddings = self.model.get_text_embeddings(text)
+            result['text_embeddings'] = text_embeddings
+            
+        return result
