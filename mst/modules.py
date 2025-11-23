@@ -52,9 +52,11 @@ class MixStyleTransferModel(torch.nn.Module):
         track_embeds = track_embeds.view(bs, num_tracks, -1)  # restore
 
         # compute mid/side from the reference mix
-        if self.mix_encoder.__class__.__name__ in ["SpatialCLAPEncoder", "CLAPEncoder"]:
+        if self.mix_encoder.__class__.__name__ in ["SpatialCLAPEncoder"]:
             mix_embed = self.mix_encoder(ref_mix)
             mix_embeds = mix_embed.unsqueeze(1).repeat(1, 2, 1)
+        elif self.mix_encoder.__class__.__name__ in ["CLAPEncoder"]:
+            mix_embeds = self.mix_encoder(ref_mix)   
         elif self.sum_and_diff:
             ref_mix_mid = ref_mix.sum(dim=1)
             ref_mix_side = ref_mix[..., 0:1, :] - ref_mix[..., 1:2, :]
@@ -1257,6 +1259,6 @@ class CLAPEncoder(nn.Module):
 
         X = self.model.get_audio_embedding_from_data(x = x, use_tensor = True)
 
-        X = X.view(bs, chs, -1).mean(dim=1)
+        X = X.view(bs, chs, -1)
 
         return X
