@@ -1121,12 +1121,12 @@ class RobertaTextEncoder(nn.Module):
         pass
 
 class AudioEncoder(nn.Module):
-    def __init__(self, sample_rate: int = 44100):
+    def __init__(self):
         super().__init__()
         self.mel_encoder = create_htsat_model()
         self.spatial_encoder = SELDModel()
         self.resampler = torchaudio.transforms.Resample(
-            orig_freq = sample_rate,
+            orig_freq = 16000,
             new_freq = 48000,
         )
 
@@ -1169,7 +1169,7 @@ class SpatialCLAPEncoder(nn.Module):
         self.embed_dim = embed_dim
         self.joint_embed_shape = joint_embed_shape
 
-        self.audio_encoder = AudioEncoder(sample_rate=sample_rate)
+        self.audio_encoder = AudioEncoder()
         self.audio_projection = nn.Sequential(
             nn.Linear(self.audio_encoder.get_output_dim(), joint_embed_shape),
             nn.ReLU(),
