@@ -1,7 +1,8 @@
 import math
 import torch
 import torch.nn as nn
-import torch.functional as F
+import torch.nn.functional as F
+import torchaudio
 import numpy as np
 
 from typing import Callable, Optional, List
@@ -11,12 +12,12 @@ from mst.panns import Cnn14
 # For Spatial-CLAP and CLAP
 from htsat import create_htsat_model
 from transformers import RobertaModel, RobertaTokenizer
-from msclap import CLAP
+import laion_clap
 import torchaudio
 
 from dasp_pytorch.functional import (
     gain,
-    stereo_panner,
+    stereo_panner,  
     compressor,
     parametric_eq,
     stereo_bus,
@@ -51,7 +52,10 @@ class MixStyleTransferModel(torch.nn.Module):
         track_embeds = track_embeds.view(bs, num_tracks, -1)  # restore
 
         # compute mid/side from the reference mix
-        if self.sum_and_diff:
+        if self.mix_encoder.__class__.__name__ in ["SpatialCLAPEncoder", "CLAPEncoder"]:
+            mix_embed = self.mix_encoder(ref_mix)
+            mix_embeds = mix_embed.unsqueeze(1).repeat(1, 2, 1)
+        elif self.sum_and_diff:
             ref_mix_mid = ref_mix.sum(dim=1)
             ref_mix_side = ref_mix[..., 0:1, :] - ref_mix[..., 1:2, :]
 
@@ -923,6 +927,10 @@ class TransformerController(torch.nn.Module):
 
         return pred_track_params, pred_fx_bus_params, pred_master_bus_params
     
+# ============================================================================================================================
+# Spatial-CLAP and CLAP encoder
+# ============================================================================================================================
+
 class SELDEncoder(nn.Module):
     def __init__(self, input_channels=2, cnn_channels=64, middle_features=128, output_features=256, n_fft=1024):
         """
@@ -1111,12 +1119,12 @@ class RobertaTextEncoder(nn.Module):
         pass
 
 class AudioEncoder(nn.Module):
-    def __init__(self, sample_rate: int = 44100):
+    def __init__(self):
         super().__init__()
         self.mel_encoder = create_htsat_model()
         self.spatial_encoder = SELDModel()
         self.resampler = torchaudio.transforms.Resample(
-            orig_freq = sample_rate,
+            orig_freq = 16000,
             new_freq = 48000,
         )
 
@@ -1130,15 +1138,13 @@ class AudioEncoder(nn.Module):
         self.mel_encoder.load_default_state_dict()
         self.spatial_encoder.load_default_state_dict()
 
-    def forward(self, x):
-        B = len(x)
+    def forward(self, x_16k, x_origin):
+        B = len(x_origin)
 
-        mel_encoded = self.mel_encoder({
-            "waveform": self.resampler((x[:, 0, :] + x[:, 1, :]) / 2)
-        })["embedding"]
+        mel_encoded = self.mel_encoder({"waveform": (x_origin[:, 0, :] + x_origin[:, 1, :]) / 2})["embedding"]
         assert mel_encoded.shape == (B, self.mel_feature_dim), f"{mel_encoded.shape=}"
 
-        spatial_encoded = self.spatial_encoder(x)
+        spatial_encoded = self.spatial_encoder(x_16k)
         assert spatial_encoded.shape == (B, self.spatial_feature_dim), f"{spatial_encoded.shape=}"
 
         return torch.cat(
@@ -1161,7 +1167,7 @@ class SpatialCLAPEncoder(nn.Module):
         self.embed_dim = embed_dim
         self.joint_embed_shape = joint_embed_shape
 
-        self.audio_encoder = AudioEncoder(sample_rate=sample_rate)
+        self.audio_encoder = AudioEncoder()
         self.audio_projection = nn.Sequential(
             nn.Linear(self.audio_encoder.get_output_dim(), joint_embed_shape),
             nn.ReLU(),
@@ -1177,8 +1183,11 @@ class SpatialCLAPEncoder(nn.Module):
 
         self.logit_scale = nn.Parameter(torch.tensor(np.log(1 / (0.07))))
 
+        self.sample_rate = sample_rate
         if pretrained:
             self.load_pretrained()
+            for param in self.parameters():
+                param.requires_grad = False
 
     def load_default_state_dict(self):
         self.audio_encoder.load_default_state_dict()
@@ -1190,8 +1199,8 @@ class SpatialCLAPEncoder(nn.Module):
         ckpt = torch.hub.load_state_dict_from_url(url, map_location="cpu")["model_state_dict"]
         self.load_state_dict(ckpt, strict=False)
 
-    def embed_audio(self, x):
-        encoded = self.audio_encoder(x)
+    def embed_audio(self, x_16k, x_origin):
+        encoded = self.audio_encoder(x_16k, x_origin)
         projected_encoded = self.audio_projection(encoded)
         return F.normalize(projected_encoded, dim=-1)
     
@@ -1200,41 +1209,40 @@ class SpatialCLAPEncoder(nn.Module):
         projected_encoded = self.text_projection(encoded)
         return F.normalize(projected_encoded, dim=-1)
 
-    def forward(self, x: torch.Tensor, text=None):
+    def forward(self, x: torch.Tensor):
         """
         Args:
             x (torch.Tensor): Audio waveform of shape (bs, chs, seq_len)
             text (Optional): Text input
         """
-        z_audio = None
-        if x is not None:
-            bs, chs, seq_len = x.size()
-            
-            # Ensure stereo input for AudioEncoder
-            if chs == 1:
-                x_input = x.repeat(1, 2, 1)
-            elif chs >= 2:
-                x_input = x[:, :2, :]
-            else:
-                raise ValueError(f"Invalid number of channels: {chs}")
+        resampler = torchaudio.transforms.Resample(
+            orig_freq = self.sample_rate,
+            new_freq = 16000,
+        )
+        
+        x_origin = x
+        x_16k = resampler(x)
+        
                 
-            z_audio = self.embed_audio(x_input)
-
-        if text is not None:
-            z_text = self.embed_text(text)
-            return {
-                "audio": z_audio,
-                "text": z_text,
-            }
+        z_audio = self.embed_audio(x_16k, x_origin)
         
         return z_audio
-
+    
 class CLAPEncoder(nn.Module):
-    def __init__(self, version='2023', use_cuda=True):
+    def __init__(self, sample_rate: int = 44100, freeze: bool = True):
         super().__init__()
-        self.model = CLAP(version=version, use_cuda=use_cuda)
+        self.model = laion_clap.CLAP_Module(enable_fusion=False)
+        self.model.load_ckpt()
+        self.sampler = torchaudio.transforms.Resample(
+            orig_freq = sample_rate,
+            new_freq = 48000
+        )
         
-    def forward(self, audio_paths=None, text=None):
+        if freeze:
+            for param in self.parameters():
+                param.requires_grad = False
+        
+    def forward(self, x: torch.torch.Tensor):
         """
         Args:
             audio_paths: List of file paths to audio files
@@ -1242,16 +1250,13 @@ class CLAPEncoder(nn.Module):
         Returns:
             Dictionary with audio_embeddings and/or text_embeddings
         """
-        result = {}
-        
-        if audio_paths is not None:
-            # Get audio embeddings
-            audio_embeddings = self.model.get_audio_embeddings(audio_paths)
-            result['audio_embeddings'] = audio_embeddings
-            
-        if text is not None:
-            # Get text embeddings
-            text_embeddings = self.model.get_text_embeddings(text)
-            result['text_embeddings'] = text_embeddings
-            
-        return result
+        bs, chs, seq_len = x.size()
+
+        x = x.view(-1, seq_len)
+        x = self.sampler(x)
+
+        X = self.model.get_audio_embedding_from_data(x = x, use_tensor = True)
+
+        X = X.view(bs, chs, -1).mean(dim=1)
+
+        return X

@@ -101,8 +101,8 @@ urllib3==2.2.2
 wandb==0.17.4
 Werkzeug==3.0.3
 yarl==1.9.4
-msclap
+laion-clap
 transformers
-htsat
+torchlibrosa
 pySmartDL
 kaggle

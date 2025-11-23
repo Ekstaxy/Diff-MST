@@ -2,8 +2,7 @@ data:
   class_path: mst.dataloader.MultitrackDataModule
   init_args:
     track_root_dirs: 
-      # - /mnt/gestalt/home/rakec/data/diff-mst
-      - /kaggle/input
+      - /mnt/gestalt/home/rakec/data/diff-mst
     metadata_files: 
       - ./data/medley.yaml
     length: 262144

@@ -49,6 +49,11 @@ model:
             joint_embed_shape: 512
             pretrained: true
             sample_rate: 44100
+        # mix_encoder:
+        #   class_path: mst.modules.CLAPEncoder
+        #   init_args:
+        #     sample_rate: 44100
+        #     freeze: true
         controller:
           class_path: mst.modules.TransformerController
           init_args:
