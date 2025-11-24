@@ -1140,10 +1140,10 @@ class AudioEncoder(nn.Module):
         self.mel_encoder.load_default_state_dict()
         self.spatial_encoder.load_default_state_dict()
 
-    def forward(self, x_16k, x_origin):
-        B = len(x_origin)
+    def forward(self, x_16k):
+        B = len(x_16k)
 
-        mel_encoded = self.mel_encoder({"waveform": (x_origin[:, 0, :] + x_origin[:, 1, :]) / 2})["embedding"]
+        mel_encoded = self.mel_encoder({"waveform": (x_16k[:, 0, :] + x_16k[:, 1, :]) / 2})["embedding"]
         assert mel_encoded.shape == (B, self.mel_feature_dim), f"{mel_encoded.shape=}"
 
         spatial_encoded = self.spatial_encoder(x_16k)
@@ -1201,8 +1201,8 @@ class SpatialCLAPEncoder(nn.Module):
         ckpt = torch.hub.load_state_dict_from_url(url, map_location="cpu")["model_state_dict"]
         self.load_state_dict(ckpt, strict=False)
 
-    def embed_audio(self, x_16k, x_origin):
-        encoded = self.audio_encoder(x_16k, x_origin)
+    def embed_audio(self, x_16k):
+        encoded = self.audio_encoder(x_16k)
         projected_encoded = self.audio_projection(encoded)
         return F.normalize(projected_encoded, dim=-1)
     
@@ -1222,11 +1222,8 @@ class SpatialCLAPEncoder(nn.Module):
             new_freq = 16000,
         ).to(x.device)
         
-        x_origin = x
         x_16k = resampler(x)
-        
-                
-        z_audio = self.embed_audio(x_16k, x_origin)
+        z_audio = self.embed_audio(x_16k)
         
         return z_audio
     
