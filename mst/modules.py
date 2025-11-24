@@ -10,7 +10,7 @@ from torchaudio.pipelines import HDEMUCS_HIGH_MUSDB_PLUS
 from mst.panns import Cnn14
 
 # For Spatial-CLAP and CLAP
-from htsat import create_htsat_model
+from mst.htsat import create_htsat_model
 from transformers import RobertaModel, RobertaTokenizer
 import laion_clap
 import torchaudio
@@ -1142,10 +1142,10 @@ class AudioEncoder(nn.Module):
 
     def forward(self, x_16k):
         B = len(x_16k)
-    def forward(self, x_16k):
-        B = len(x_16k)
 
-        mel_encoded = self.mel_encoder({"waveform": (x_16k[:, 0, :] + x_16k[:, 1, :]) / 2})["embedding"]
+        mel_encoded = self.mel_encoder({
+            "waveform": self.resampler((x_16k[:, 0, :] + x_16k[:, 1, :]) / 2)
+        })["embedding"]
         assert mel_encoded.shape == (B, self.mel_feature_dim), f"{mel_encoded.shape=}"
 
         spatial_encoded = self.spatial_encoder(x_16k)
@@ -1205,8 +1205,6 @@ class SpatialCLAPEncoder(nn.Module):
 
     def embed_audio(self, x_16k):
         encoded = self.audio_encoder(x_16k)
-    def embed_audio(self, x_16k):
-        encoded = self.audio_encoder(x_16k)
         projected_encoded = self.audio_projection(encoded)
         return F.normalize(projected_encoded, dim=-1)
     
@@ -1224,10 +1222,9 @@ class SpatialCLAPEncoder(nn.Module):
         resampler = torchaudio.transforms.Resample(
             orig_freq = self.sample_rate,
             new_freq = 16000,
-        )
+        ).to(x.device)
         
         x_16k = resampler(x)
-        z_audio = self.embed_audio(x_16k)
         z_audio = self.embed_audio(x_16k)
         
         return z_audio
