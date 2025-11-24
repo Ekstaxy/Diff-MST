@@ -1143,7 +1143,9 @@ class AudioEncoder(nn.Module):
     def forward(self, x_16k):
         B = len(x_16k)
 
-        mel_encoded = self.mel_encoder({"waveform": (x_16k[:, 0, :] + x_16k[:, 1, :]) / 2})["embedding"]
+        mel_encoded = self.mel_encoder({
+            "waveform": self.resampler((x_16k[:, 0, :] + x_16k[:, 1, :]) / 2)
+        })["embedding"]
         assert mel_encoded.shape == (B, self.mel_feature_dim), f"{mel_encoded.shape=}"
 
         spatial_encoded = self.spatial_encoder(x_16k)
