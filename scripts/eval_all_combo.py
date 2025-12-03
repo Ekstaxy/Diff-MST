@@ -252,10 +252,10 @@ if __name__ == "__main__":
                         AF[example_name][method_name][audio_section]["track_stop_idx"] = track_start_idx + (i+1)*441000
                         AF[example_name][method_name][audio_section]["ref_start_idx"] = ref_start_idx + j*441000
                         AF[example_name][method_name][audio_section]["ref_stop_idx"] = ref_start_idx + (j+1)*441000
-
+                        
                         mix_tracks = mix_tracks.to(args.device)
                         ref_analysis = ref_analysis.to(args.device)
-                        
+
                         with torch.no_grad():
                             result = func(
                                 mix_tracks.clone(),
@@ -277,7 +277,7 @@ if __name__ == "__main__":
                         print("pred_mix shape", pred_mix.shape)
                         # loudness normalize the output mix
                         mix_lufs_db = meter.integrated_loudness(
-                            pred_mix.squeeze(0).permute(1, 0).numpy()
+                            pred_mix.cpu().squeeze(0).permute(1, 0).numpy()
                         )
                         print("pred_mix_lufs_db", mix_lufs_db)
                         #print(mix_lufs_db)
@@ -287,10 +287,10 @@ if __name__ == "__main__":
                             example_dir,
                             f"{example_name}-{method_name}-tracks-{i}-ref={j}-lufs-{ref_loudness_target:0.0f}.wav",
                         )
-                        torchaudio.save(mix_filepath, pred_mix.view(chs, -1), 44100)
+                        torchaudio.save(mix_filepath, pred_mix.view(chs, -1).cpu(), 44100)
                         
                         # compute audio features
-                        AF_loss = loss(pred_mix, ref_analysis)
+                        AF_loss = loss(pred_mix, ref_analysis.cpu())
                        
                         for key, value in AF_loss.items():
                             AF[example_name][method_name][audio_section][key] = value.detach().cpu().numpy()
