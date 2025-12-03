@@ -113,12 +113,6 @@ def run_diffmst(
     norm_analysis_tracks = norm_analysis_tracks.contiguous()
     norm_tracks = norm_tracks.contiguous()
 
-    device = next(model.parameters()).device
-    norm_analysis_tracks = norm_analysis_tracks.to(device)
-    analysis_ref = ref.to(device) if ref.device != device else ref
-
-    print(norm_analysis_tracks.device, analysis_ref.device)
-
     #  ---- run model to estimate mix parmaeters using analysis audio ----
     pred_track_params, pred_fx_bus_params, pred_master_bus_params = model(
         norm_analysis_tracks, analysis_ref
