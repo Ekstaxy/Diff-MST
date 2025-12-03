@@ -188,6 +188,9 @@ if __name__ == "__main__":
         tracks = tracks.view(1, -1, max_length)
         ref_audio = ref_audio.view(1, 2, -1)
 
+        tracks = tracks.to(args.device) 
+        ref_audio = ref_audio.to(args.device) 
+
         # crop tracks to max of 60 seconds or so
         # tracks = tracks[..., :4194304]
         tracks_length = max_length
