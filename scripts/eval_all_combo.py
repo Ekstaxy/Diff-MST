@@ -49,6 +49,8 @@ class NumpyEncoder(json.JSONEncoder):
     
 def parse_args():
     parser = argparse.ArgumentParser(description='Evaluate Diff-MST model')
+    parser.add_argument('--device', type=str, default='cuda:0',
+                        help='Computation device')
     
     # Model paths
     parser.add_argument('--config', type=str, required=True,
@@ -87,6 +89,7 @@ if __name__ == "__main__":
             "model": load_diffmst(
                 args.config,
                 args.checkpoint,
+                map_location=args.device,
             ),
             "func": run_diffmst,
         },
