@@ -86,7 +86,7 @@ def run_diffmst(
         analysis_track = analysis_tracks[:, track_idx : track_idx + 1, :]
         track = tracks[:, track_idx : track_idx + 1, :]
         lufs_db = meter.integrated_loudness(
-            analysis_track.cpu().squeeze(0).permute(1, 0).numpy()
+            analysis_track.squeeze(0).permute(1, 0).numpy()
         )
         if lufs_db < -80.0:
             print(f"Skipping track {track_idx} due to low loudness {lufs_db}.")
@@ -112,6 +112,10 @@ def run_diffmst(
     # make tensor contiguous
     norm_analysis_tracks = norm_analysis_tracks.contiguous()
     norm_tracks = norm_tracks.contiguous()
+
+    device = next(model.parameters()).device
+    norm_analysis_tracks = norm_analysis_tracks.to(device)
+    analysis_ref = ref.to(device) if ref.device != device else ref
 
     #  ---- run model to estimate mix parmaeters using analysis audio ----
     pred_track_params, pred_fx_bus_params, pred_master_bus_params = model(
