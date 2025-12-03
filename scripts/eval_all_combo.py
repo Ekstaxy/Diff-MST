@@ -188,9 +188,6 @@ if __name__ == "__main__":
         tracks = tracks.view(1, -1, max_length)
         ref_audio = ref_audio.view(1, 2, -1)
 
-        tracks = tracks.to(args.device) 
-        ref_audio = ref_audio.to(args.device) 
-
         # crop tracks to max of 60 seconds or so
         # tracks = tracks[..., :4194304]
         tracks_length = max_length
@@ -255,6 +252,10 @@ if __name__ == "__main__":
                         AF[example_name][method_name][audio_section]["track_stop_idx"] = track_start_idx + (i+1)*441000
                         AF[example_name][method_name][audio_section]["ref_start_idx"] = ref_start_idx + j*441000
                         AF[example_name][method_name][audio_section]["ref_stop_idx"] = ref_start_idx + (j+1)*441000
+
+                        mix_tracks = mix_tracks.to(args.device)
+                        ref_analysis = ref_analysis.to(args.device)
+                        
                         with torch.no_grad():
                             result = func(
                                 mix_tracks.clone(),
