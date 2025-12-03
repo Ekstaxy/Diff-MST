@@ -245,6 +245,9 @@ if __name__ == "__main__":
                         model, mix_console = method["model"]
                         func = method["func"]
 
+                        model = model.to(args.device) if model is not None else None
+                        mix_console = mix_console.to(args.device) if mix_console is not None else None
+
                         #print(tracks.shape, ref_audio.shape)
                         audio_section = f"track-{i}-ref-{j}-lufs-{ref_loudness_target:0.0f}"
                         AF[example_name][method_name][audio_section] = {}
