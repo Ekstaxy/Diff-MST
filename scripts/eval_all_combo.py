@@ -257,8 +257,8 @@ if __name__ == "__main__":
                             result = func(
                                 mix_tracks.clone(),
                                 ref_analysis.clone(),
-                                model.to(args.device),
-                                mix_console.to(args.device),
+                                model,
+                                mix_console,
                                 track_start_idx=0,
                                 ref_start_idx=0,
                             )

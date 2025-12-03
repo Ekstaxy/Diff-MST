@@ -895,8 +895,6 @@ class TransformerController(torch.nn.Module):
 
         # apply learned embeddings to both input embeddings
         track_embeds += self.track_embedding.repeat(bs, num_tracks, 1)
-        print(mix_embeds.device)
-        print(self.mix_embedding.device)
         mix_embeds += self.mix_embedding.repeat(bs, 1, 1)
 
         # concat embeds into single "sequence"
