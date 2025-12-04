@@ -799,6 +799,9 @@ class SpectrogramEncoder(torch.nn.Module):
         # move channels to batch dim
         x = x.view(-1, seq_len)
 
+        print(self.model.device)
+        print(x.device)
+
         X = torch.stft(
             x,
             n_fft=self.n_fft,
@@ -1323,8 +1326,6 @@ class CLAPEncoder(nn.Module):
             new_freq = 48000
         ).to(x.device)
 
-        print(self.model.device)
-        print(x.device)
         x = resampler(x)
         bs, chs, seq_len = x.size()
 
