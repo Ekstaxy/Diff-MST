@@ -1323,6 +1323,8 @@ class CLAPEncoder(nn.Module):
             new_freq = 48000
         ).to(x.device)
 
+        print(self.model.device)
+        print(x.device)
         x = resampler(x)
         bs, chs, seq_len = x.size()
 
