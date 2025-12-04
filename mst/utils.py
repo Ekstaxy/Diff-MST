@@ -148,7 +148,7 @@ def run_diffmst(
                 pred_mix_window, (0, analysis_len - pred_mix_window.shape[-1])
             )
 
-        window = torch.hann_window(pred_mix_window.shape[-1])
+        window = torch.hann_window(pred_mix_window.shape[-1]).to(pred_mix_window.device)
         # apply hann window
         if i == 0:
             # set the first half of the window to 1
