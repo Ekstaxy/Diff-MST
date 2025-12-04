@@ -37,7 +37,7 @@ def run_diffmst(
     track_start_idx: int = 0,
     ref_start_idx: int = 0,
 ):
-    "" the differentiable mix style transfer model.
+    """Run the differentiable mix style transfer model.
 
     Args:
         tracks (Tensor): Set of input tracks with shape (bs, num_tracks, 1, seq_len).
