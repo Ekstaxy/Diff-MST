@@ -291,6 +291,7 @@ if __name__ == "__main__":
                     example_dir,
                     f"{example_name}-{method_name}-ref={song_section}-lufs-{ref_loudness_target:0.0f}.wav",
                 )
+                pred_mix = pred_mix.cpu()
                 torchaudio.save(mix_filepath, pred_mix.view(chs, -1), 44100)
 
                 # also save only the analysis section
