@@ -15,7 +15,7 @@ def equal_loudness_mix(tracks: torch.Tensor, *args, **kwargs):
     norm_tracks = []
     for track_idx in range(tracks.shape[1]):
         track = tracks[:, track_idx : track_idx + 1, :]
-        lufs_db = meter.integrated_loudness(track.squeeze(0).permute(1, 0).numpy())
+        lufs_db = meter.integrated_loudness(track.squeeze(0).permute(1, 0).cpu().numpy())
 
         if lufs_db < -80.0:
             print(f"Skipping track {track_idx} with {lufs_db:.2f} LUFS.")
@@ -146,7 +146,7 @@ if __name__ == "__main__":
             audio = torchaudio.functional.resample(audio, sr, 44100)
 
         # loudness normalize the tracks to -48 LUFS
-        lufs_db = meter.integrated_loudness(audio.permute(1, 0).numpy())
+        lufs_db = meter.integrated_loudness(audio.permute(1, 0).cpu().numpy())
         # lufs_delta_db = -48 - lufs_db
         # audio = audio * 10 ** (lufs_delta_db / 20)
 
@@ -185,7 +185,7 @@ if __name__ == "__main__":
     sum_filepath = os.path.join(example_dir, f"{example_name}-sum.wav")
 
     # loudness normalize the sum mix
-    sum_lufs_db = meter.integrated_loudness(sum_mix.permute(1, 0).numpy())
+    sum_lufs_db = meter.integrated_loudness(sum_mix.permute(1, 0).cpu().numpy())
     lufs_delta_db = target_lufs_db - sum_lufs_db
     sum_mix = sum_mix * 10 ** (lufs_delta_db / 20)
 
@@ -231,7 +231,7 @@ if __name__ == "__main__":
 
             # loudness normalize the reference mix section to -14 LUFS
             ref_lufs_db = meter.integrated_loudness(
-                ref_analysis.squeeze().permute(1, 0).numpy()
+                ref_analysis.squeeze().permute(1, 0).cpu().numpy()
             )
             lufs_delta_db = ref_loudness_target - ref_lufs_db
             ref_analysis = ref_analysis * 10 ** (lufs_delta_db / 20)
@@ -280,7 +280,7 @@ if __name__ == "__main__":
 
                 # loudness normalize the output mix
                 mix_lufs_db = meter.integrated_loudness(
-                    pred_mix.squeeze(0).permute(1, 0).numpy()
+                    pred_mix.squeeze(0).permute(1, 0).cpu().numpy()
                 )
                 print(mix_lufs_db)
                 lufs_delta_db = target_lufs_db - mix_lufs_db
@@ -300,7 +300,7 @@ if __name__ == "__main__":
 
                 # loudness normalize the output mix
                 mix_lufs_db = meter.integrated_loudness(
-                    mix_analysis.squeeze(0).permute(1, 0).numpy()
+                    mix_analysis.squeeze(0).permute(1, 0).cpu().numpy()
                 )
                 print(mix_lufs_db)
                 mix_analysis = mix_analysis * 10 ** (lufs_delta_db / 20)
