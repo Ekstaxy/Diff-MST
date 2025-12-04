@@ -799,7 +799,7 @@ class SpectrogramEncoder(torch.nn.Module):
         # move channels to batch dim
         x = x.view(-1, seq_len)
 
-        print(self.model.device)
+        # print(self.model.device)
         print(x.device)
 
         X = torch.stft(
