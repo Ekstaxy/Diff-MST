@@ -66,7 +66,7 @@ model:
             sample_rate: 44100
             freeze: true
             use_projection: false
-            ckpt_path: /mnt/gestalt/home/rakec/checkpoint/CLAP/music_audioset_epoch_15_esc_90.14.pt
+            ckpt_path: /kaggle/working/Diff-MST/music_audioset_epoch_15_esc_90.14.pt
             htsat_base: true
         controller:
           class_path: mst.modules.TransformerController

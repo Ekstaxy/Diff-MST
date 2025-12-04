@@ -86,7 +86,7 @@ def run_diffmst(
         analysis_track = analysis_tracks[:, track_idx : track_idx + 1, :]
         track = tracks[:, track_idx : track_idx + 1, :]
         lufs_db = meter.integrated_loudness(
-            analysis_track.squeeze(0).permute(1, 0).numpy()
+            analysis_track.squeeze(0).permute(1, 0).cpu().numpy()
         )
         if lufs_db < -80.0:
             print(f"Skipping track {track_idx} due to low loudness {lufs_db}.")
@@ -120,7 +120,7 @@ def run_diffmst(
 
     # ------- generate a mix using the predicted mix console parameters -------
     # apply with sliding window of 262144 samples with overlap
-    pred_mix = torch.zeros(1, 2, norm_tracks.shape[-1])
+    pred_mix = torch.zeros(1, 2, norm_tracks.shape[-1]).to(norm_tracks.device)
 
     for i in tqdm(range(0, norm_tracks.shape[-1], analysis_len // 2)):
         norm_tracks_window = norm_tracks[..., i : i + analysis_len]
@@ -148,7 +148,7 @@ def run_diffmst(
                 pred_mix_window, (0, analysis_len - pred_mix_window.shape[-1])
             )
 
-        window = torch.hann_window(pred_mix_window.shape[-1])
+        window = torch.hann_window(pred_mix_window.shape[-1]).to(pred_mix_window.device)
         # apply hann window
         if i == 0:
             # set the first half of the window to 1
