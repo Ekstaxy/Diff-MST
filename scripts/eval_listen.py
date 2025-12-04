@@ -261,8 +261,8 @@ if __name__ == "__main__":
 
                 with torch.no_grad():
                     result = func(
-                        tracks.clone(),
-                        ref_audio.clone(),
+                        tracks.clone().to(args.device),
+                        ref_audio.clone().to(args.device),
                         model,
                         mix_console,
                         track_start_idx=track_start_idx,
