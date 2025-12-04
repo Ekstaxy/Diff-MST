@@ -120,7 +120,7 @@ def run_diffmst(
 
     # ------- generate a mix using the predicted mix console parameters -------
     # apply with sliding window of 262144 samples with overlap
-    pred_mix = torch.zeros(1, 2, norm_tracks.shape[-1])
+    pred_mix = torch.zeros(1, 2, norm_tracks.shape[-1]).to(norm_tracks.device)
 
     for i in tqdm(range(0, norm_tracks.shape[-1], analysis_len // 2)):
         norm_tracks_window = norm_tracks[..., i : i + analysis_len]
