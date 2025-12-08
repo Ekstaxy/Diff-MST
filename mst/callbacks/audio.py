@@ -11,6 +11,7 @@ from mst.callbacks.plotting import plot_spectrograms
 class LogAudioCallback(pl.callbacks.Callback):
     def __init__(
         self,
+        use_separate_tracks: bool = False,
         num_batches: int = 8,
         peak_normalize: bool = True,
         sample_rate: int = 44100,
@@ -19,6 +20,7 @@ class LogAudioCallback(pl.callbacks.Callback):
         self.num_batches = num_batches
         self.peak_normalize = peak_normalize
         self.sample_rate = sample_rate
+        self.use_separate_tracks = use_separate_tracks
 
         self.meter = pyln.Meter(sample_rate)
 
@@ -37,6 +39,7 @@ class LogAudioCallback(pl.callbacks.Callback):
                 for sample_idx in range(num_examples):
                     self.log_audio(
                         outputs,
+                        self.use_separate_tracks,
                         batch_idx,
                         sample_idx,
                         pl_module.mix_console.sample_rate,
@@ -48,6 +51,7 @@ class LogAudioCallback(pl.callbacks.Callback):
     def log_audio(
         self,
         outputs,
+        use_separate_tracks: bool,
         batch_idx: int,
         sample_idx: int,
         sample_rate: int,
@@ -66,6 +70,12 @@ class LogAudioCallback(pl.callbacks.Callback):
                 continue
 
             x = audio[sample_idx, ...].float()
+            if use_separate_tracks and key == "ref_mix_a":
+                # reshape from (num_tracks*2, seq_len) to (2, num_tracks, seq_len)
+                num_tracks = x.shape[0] // 2
+                x = x.view(2, num_tracks, x.shape[1])
+                # sum across tracks to get stereo mix
+                x = x.sum(dim=1)
             x = x.permute(1, 0)
             # normalize the audio to -16 dBFS
             lufs_db = self.meter.integrated_loudness(x.numpy())

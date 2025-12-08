@@ -18,7 +18,7 @@ def batch_stereo_peak_normalize(x: torch.Tensor):
         x (Tensor): 1-d tensor with shape (bs, 2, seq_len).
 
     Returns:
-        x (Tensor): Normalized signal withs shape (vs, 2, seq_len).
+        x (Tensor): Normalized signal withs shape (bs, 2, seq_len).
     """
     # first find the peaks in each channel
     gain_lin = x.abs().max(dim=-1, keepdim=True)[0]
@@ -28,6 +28,25 @@ def batch_stereo_peak_normalize(x: torch.Tensor):
     x_norm = x / gain_lin.clamp(1e-8)  # avoid division by zero
     return x_norm
 
+def batch_stereo_tracks_peak_normalize(x: torch.Tensor):
+    """ Normalize a batch of stereo tracks by left/right peak value.
+
+    Args:
+        x (Tensor): 1-d tensor with shape (bs, 2, num_tracks, seq_len).
+
+    Returns:
+        x (Tensor): Normalized signal withs shape (bs, 2, num_tracks, seq_len).
+    """
+    # sum to become stereo mix
+    mix = x.sum(dim=2)
+    # first find the peaks in each channel
+    gain_lin = mix.abs().max(dim=-1, keepdim=True)[0]
+    # then find the maximum peak across left and right per batch item
+    gain_lin = gain_lin.max(dim=-2, keepdim=True)[0]
+    gain_lin = gain_lin.unsqueeze(2)
+    # normalize by the maximum peak
+    x_norm = x / gain_lin.clamp(1e-8)  # avoid division by zero
+    return x_norm
 
 def run_diffmst(
     tracks: torch.Tensor,
