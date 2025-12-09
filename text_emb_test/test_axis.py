@@ -125,7 +125,7 @@ run_axis_analysis(
 # Note: Using filenames generated in previous turn. 
 # If you used 'text_loud.txt', change 'text_high_gain.txt' below.
 run_axis_analysis(
-    "text_high_gain.txt", "text_low_gain.txt", 
+    "text_loud.txt", "text_quiet.txt", 
     "High Gain", "Low Gain", 
     "purple", "pink", 
     "Gain/Loudness Axis", "axis_gain.png"
