@@ -101,11 +101,11 @@ with open("text_compressed.txt", "r") as f:
     text2 = [t.strip() for t in f.readlines() if t.strip()]
 text2_batch = [text2[i:i+50] for i in range(0, len(text2), 50)]
 
-with open("text_high_gain.txt", "r") as f:
+with open("text_loud.txt", "r") as f:
     text3 = [t.strip() for t in f.readlines() if t.strip()]
 text3_batch = [text3[i:i+50] for i in range(0, len(text3), 50)]
 
-with open("text_low_gain.txt", "r") as f:
+with open("text_quiet.txt", "r") as f:
     text4 = [t.strip() for t in f.readlines() if t.strip()]
 text4_batch = [text4[i:i+50] for i in range(0, len(text4), 50)]
 
