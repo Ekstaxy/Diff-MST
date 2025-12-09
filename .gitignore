@@ -1,4 +1,5 @@
 venv/**
+.venv/
 env/**
 mst/callbacks/trail.ipynb
 model_saved/**

@@ -1,0 +1,100 @@
+Decrease the gain.
+Turn down the volume.
+Attenuate the signal.
+Make the track quieter.
+Lower the fader level.
+Reduce the amplitude.
+Cut the gain on the channel.
+Pull the level down.
+Minimize the loudness.
+The signal is too hot, lower it.
+Make the audio softer.
+Decrease the input level.
+Turn the volume down.
+Make the mix sound gentle.
+Bring down the signal strength.
+Reduce the overall level.
+Subtract 6dB of gain.
+Make it sound subtle and quiet.
+Pad the input signal.
+Lower the gain setting.
+The volume is too high, turn it down.
+Gain staging requires a cut here.
+Pull the master fader down.
+Decrease the loudness perception.
+Make the sound fade into the background.
+Attenuate the strong signal.
+Sit the track back in the mix by lowering the volume.
+Turn the knob to the left.
+Level down the audio.
+Cut the preamp gain.
+Make the instrument blend in by decreasing the level.
+The audio should be quieter.
+Lower the decibels.
+Reduce gain to prevent clipping.
+Make the output weaker.
+Decrease the monitor level.
+Pull the volume down to zero.
+Shrink the waveform amplitude.
+Make the sound less intense.
+Lower the gain for a cleaner signal.
+Turn it down to a whisper.
+Attenuate the loud sections.
+Push the volume back.
+Decrease the gain to reduce noise.
+Make the track peak lower.
+Remove volume from the mix.
+Pad the signal for less impact.
+Lower the output gain.
+Cut the frequencies by decreasing level.
+Make the sound recessive.
+Decrease the sound pressure level.
+Turn down the gain knob.
+Bring the levels down to infinity.
+Stop the audio from clipping by cutting gain.
+Pull the volume lower.
+Attenuate the incoming signal.
+Lower the track fader.
+Decrease the volume for headroom.
+Make the music play softer.
+Gain down the microphone.
+Cut the line level.
+Turn the volume control down.
+Make the sound distant by lowering the gain.
+Decrease the loudness of the recording.
+Pull the levels out of the red.
+Attenuate the high-level peaks.
+Make the track hide by turning it down.
+Lower the gain structure.
+Cut the signal flow.
+Make the audio whisper.
+Decrease the dynamic impact with less volume.
+Turn down the output.
+Gain reduction is applied.
+Make the signal delicate.
+Lower the perceived volume.
+Attenuate the channel strip.
+Cut the master output.
+Make the sound passive with less gain.
+Decrease the volume for background listening.
+Pull the gain below unity.
+Turn down the speakers.
+Make the signal colder.
+Lower the recording level.
+Attenuate the mix bus.
+Cut the input gain.
+Make the audio subtle.
+Decrease the playback volume.
+Turn down the amplification.
+Gain is set to low.
+Make the track disappear.
+Lower the digital level.
+Cut the analog signal.
+Make the sound light and soft.
+Decrease the gain to clean up.
+Turn down the level control.
+Attenuate the main mix.
+Cut the audio energy.
+Make the track sound tiny.
+Decrease the gain to the minimum.
+Turn the volume all the way down.

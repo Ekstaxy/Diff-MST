@@ -1,0 +1,100 @@
+The sound is completely mono.
+The mix is dead center.
+There is no stereo width.
+The audio is focused in the middle.
+A narrow, point-source sound.
+The mix sounds collapsed and small.
+Everything is happening in the phantom center.
+The stereo image is non-existent.
+A direct, in-your-face mono signal.
+The sound is confined to the center channel.
+Lacking spatial breadth.
+The mix feels tight and narrow.
+It sounds like it's coming from a single speaker.
+The side channels are silent.
+A focused, laser-like sound.
+The instruments are bunched together in the middle.
+Mono compatibility is perfect.
+The sound is strictly centered.
+No stereo information is present.
+A vintage mono recording style.
+The soundstage is extremely narrow.
+Everything is stacked on top of each other in the center.
+The audio lacks horizontal dimension.
+A dry, centered sound.
+The mix sounds boxy and confined.
+The stereo width has been reduced to zero.
+Centered and direct.
+The sound does not spread out.
+A narrow frequency and spatial range.
+The signal is purely mid-channel.
+The mix sounds one-dimensional.
+There is no separation between left and right.
+The audio is anchored firmly in the center.
+A small, intimate sound.
+The spatial image is flat.
+Everything sits right in front of you.
+The mix is devoid of width.
+A classic mono production.
+The sound is effectively dual-mono.
+Narrow and contained.
+The mix feels claustrophobic.
+There is no left-right difference.
+The sound is pinpointed to the center.
+A collapsed stereo field.
+The audio is strictly focused.
+No panning is applied; everything is center.
+A narrow tunnel of sound.
+The mix is linear and centered.
+The sound source is singular and narrow.
+Totally mono.
+The signal is summed to a single channel.
+The audio is spatially collapsed.
+The mix sounds like it's coming from a telephone.
+There is absolute phase coherence in the center.
+The sound lacks any lateral movement.
+Everything is routed to the mid channel.
+The stereo width knob is turned to zero.
+A focused, point-source audio event.
+The mix is completely devoid of spatial spread.
+The sound is constrained to the middle.
+It sounds like a single microphone recording.
+The side signal has been muted completely.
+The audio is tightly packed in the center.
+A one-dimensional listening experience.
+The sound does not extend beyond the center point.
+The mix feels small and direct.
+There is no stereo difference information.
+The audio is strictly mono.
+The soundstage is virtually non-existent.
+All elements share the same spatial position.
+The mix is narrow and punchy.
+The sound is locked to the phantom center.
+There is no width to the sound.
+A purely monophonic signal.
+The audio is centered and narrow.
+The mix creates a tunnel effect.
+The sound is focused like a laser beam.
+There is no spatial diversity.
+The output is dual-mono.
+The mix sounds vertically stacked but horizontally flat.
+The stereo image is closed down.
+The sound is localized entirely in the center.
+A tight, narrow sound field.
+The width is completely restricted.
+The audio feels compressed spatially.
+Everything is positioned at zero degrees.
+The mix is intentionally narrow.
+The sound is direct and centered.
+There is no left-to-right separation.
+The audio is monaural.
+The mix focuses on the center channel energy.
+The sound is spatially static.
+A narrow and focused presentation.
+The stereo field is completely collapsed.
+The sound is anchored in the middle.
+There is no spatial breadth.
+The mix is centered and coherent.
+The audio lacks stereo dimension.
+The sound is strictly mid-focused.
+A completely narrow signal.
