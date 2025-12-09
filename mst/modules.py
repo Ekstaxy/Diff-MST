@@ -826,6 +826,7 @@ class TransformerController(torch.nn.Module):
     def __init__(
         self,
         embed_dim: int,
+        num_tracks: int,
         num_track_control_params: int,
         num_fx_bus_control_params: int,
         num_master_bus_control_params: int,
@@ -833,6 +834,7 @@ class TransformerController(torch.nn.Module):
         nhead: int = 8,
         use_fx_bus: bool = False,
         use_master_bus: bool = False,
+        train_only_proj_layer: bool = False
     ) -> None:
         """Transformer based Controller that predicts mix parameters given track and reference mix embeddings.
 
@@ -843,6 +845,7 @@ class TransformerController(torch.nn.Module):
             nhead (int): Number of attention heads in each layer.
             use_fx_bus (bool): Whether to use the FX bus.
             use_master_bus (bool): Whether to use the master bus.
+            train_only_proj_layer (bool): Whether to only train the projection layer.
         """
         super().__init__()
         self.embed_dim = embed_dim
@@ -853,6 +856,15 @@ class TransformerController(torch.nn.Module):
         self.nhead = nhead
         self.use_fx_bus = use_fx_bus
         self.use_master_bus = use_master_bus
+        self.train_only_proj_layer = train_only_proj_layer
+
+        # Project ref_mix_tracks into shape of ref_mix
+        self.proj_layer = torch.nn.Sequential(
+            torch.nn.Linear(embed_dim * num_tracks, embed_dim * 4),
+            torch.nn.ReLU(),
+            torch.nn.Dropout(0.1),
+            torch.nn.Linear(embed_dim * 4, embed_dim)
+        )
 
         self.track_embedding = torch.nn.Parameter(torch.randn(1, 1, embed_dim))
         self.mix_embedding = torch.nn.Parameter(torch.randn(1, 2, embed_dim))
@@ -873,6 +885,12 @@ class TransformerController(torch.nn.Module):
             embed_dim, num_master_bus_control_params
         )
 
+        if self.train_only_proj_layer:
+            for param in self.parameters():
+                param.requires_grad = False
+            for param in self.proj_layer.parameters():
+                param.requires_grad = True
+
     def forward(
         self,
         track_embeds: torch.torch.Tensor,
@@ -892,6 +910,15 @@ class TransformerController(torch.nn.Module):
             pred_master_bus_params (torch.torch.Tensor): Predicted master bus parameters with shape (bs, num_master_bus_control_params)
         """
         bs, num_tracks, embed_dim = track_embeds.size()
+
+        if mix_embeds.size(1) != 2:
+            # Use projection layer
+            # view from (bs, num_tracks*2, embed_dim) to (bs, 2, num_tracks * embed_dim)
+            # Reshape: (bs, num_tracks*2, embed_dim) -> (bs, num_tracks, 2, embed_dim)
+            mix_embeds = mix_embeds.view(bs, 2, num_tracks, embed_dim)
+            mix_embeds = mix_embeds.view(bs, 2, num_tracks * embed_dim)
+            # Project to (bs, 2, embed_dim)
+            mix_embeds = self.proj_layer(mix_embeds)
 
         # apply learned embeddings to both input embeddings
         track_embeds += self.track_embedding.repeat(bs, num_tracks, 1)
@@ -1283,7 +1310,7 @@ class SpatialCLAPEncoder(nn.Module):
     
 class CLAPEncoder(nn.Module):
     def __init__(
-        self, sample_rate: int = 44100, freeze: bool = True, use_projection: bool = False, 
+        self, sample_rate: int = 44100, freeze: bool = True, 
         ckpt_path: Optional[str] = None, htsat_base: bool = False
     ):
         super().__init__()
@@ -1301,15 +1328,6 @@ class CLAPEncoder(nn.Module):
         if freeze:
             for param in self.parameters():
                 param.requires_grad = False
-        
-        if use_projection:
-            self.projection = nn.Sequential(
-                nn.Linear(512, 2048),
-                nn.ReLU(),
-                nn.Linear(2048, 512),
-            )
-        else:
-            self.projection = None
         
     def forward(self, x: torch.torch.Tensor):
         """
@@ -1330,9 +1348,7 @@ class CLAPEncoder(nn.Module):
 
         X = self.model.get_audio_embedding_from_data(x = x, use_tensor = True)
 
-        if self.projection is not None:
-            X = self.projection(X)
-
         X = X.view(bs, chs, -1)
 
         return X
+    

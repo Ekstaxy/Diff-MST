@@ -3,7 +3,9 @@ import os
 import torch
 import torchaudio
 import pyloudnorm as pyln
+import laion_clap
 from mst.utils import load_diffmst, run_diffmst
+import numpy as np
 
 
 def equal_loudness_mix(tracks: torch.Tensor, *args, **kwargs):
@@ -29,14 +31,19 @@ def equal_loudness_mix(tracks: torch.Tensor, *args, **kwargs):
     sum_mix = torch.sum(norm_tracks, dim=1, keepdim=True).repeat(1, 2, 1)
     sum_mix /= sum_mix.abs().max()
 
-    return sum_mix, None, None, None
+    return sum_mix, None, None, None, None
 
 
 if __name__ == "__main__":
     meter = pyln.Meter(44100)
     target_lufs_db = -22.0
     output_dir = "outputs/listen_1"
+    use_text_optimize = True
     os.makedirs(output_dir, exist_ok=True)
+    clap_model = laion_clap.CLAP_Module(enable_fusion=True)
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    optimize_option = "slerp"
+    # optimize_option = "ADAM"
 
     methods = {
         "diffmst-16": {
@@ -233,6 +240,7 @@ if __name__ == "__main__":
                             pred_track_param_dict,
                             pred_fx_bus_param_dict,
                             pred_master_bus_param_dict,
+                            pred_mixed_tracks,
                         ) = result
 
                     bs, chs, seq_len = pred_mix.shape
@@ -269,5 +277,87 @@ if __name__ == "__main__":
                         f"{example_name}-{method_name}-analysis-{song_section}-lufs-{ref_loudness_target:0.0f}.wav",
                     )
                     torchaudio.save(mix_filepath, mix_analysis.view(chs, -1), 44100)
+                    
+                    if method_name == "diffmst-16" and use_text_optimize:
+                        track_idx = 0
+                        text = "Make it sound brighter"
+                        text_tokens = clap_model.get_text_tokens([text], device=device)
+                        
+                        # pred_mixed_tracks: batchsize, 2, num_tracks, seq_len
+                        # projection layer: batchsize, 2*num_tracks, seq_len
+                        # in inference, batchsize = 1
+                        
+
+                        # pred_mixed_tracks: (bs, 2, num_tracks, seq_len)
+                        bs, chs, num_tracks, seq_len = pred_mixed_tracks.shape
+
+                        track_embeddings = []
+                        for b in range(bs):
+                            audio_batch = []
+                            for c in range(chs):
+                                for t in range(num_tracks):
+                                    # build a batch of mono waveforms for this track
+                                    waveform = pred_mixed_tracks[b, c, t, :]
+                                    audio_batch.append(waveform)
+                            audio_batch = torch.stack(audio_batch, dim=0).to(device)  # (2*num_tracks, seq_len)
+                            # get the embeddings for this batch
+                            batch_track_embeddings = clap_model.get_audio_embedding(audio_batch, use_tensor=True) # (2*num_tracks, D)
+                        
+                            track_embeddings.append(batch_track_embeddings)
+                        # stack into (bs, num_tracks, D)
+                        track_embeddings = torch.stack(track_embeddings, dim=0) # (bs, 2*num_tracks, D)                        
+                        
+                        if optimize_option == "slerp":
+                            alpha = 0.2
+                            for i in range(2):
+                                track_embedding = track_embeddings[0, i * num_tracks + track_idx, :]  # (D,)
+                                text_token = text_tokens[0, :]  # (token_len,)
+
+                                # normalize the embeddings
+                                track_embedding_norm = track_embedding / track_embedding.norm(dim=0, keepdim=True)
+                                text_token_norm = text_token / text_token.norm(dim=0, keepdim=True)
+
+                                # slerp interpolation
+                                omega = torch.acos(torch.clamp(torch.dot(track_embedding_norm, text_token_norm), -1.0, 1.0))
+                                so = torch.sin(omega)
+                                if so == 0:
+                                    slerp_embedding = track_embedding
+                                else:
+                                    slerp_embedding = (torch.sin((1.0 - alpha) * omega) / so) * track_embedding + (torch.sin(alpha * omega) / so) * text_embedding
+
+                                # replace the embedding
+                                track_embeddings[0, i * num_tracks + track_idx, :] = slerp_embedding
+                                
+                            
+                        elif optimize_option == "ADAM":
+                            for i in range(2):
+                                # Define the optimizer for the track embeddings
+                                optimizer = torch.optim.Adam(
+                                    [track_embeddings[0, i * num_tracks + track_idx, :]], lr=1e-3
+                                )
+
+                                # Optimization loop
+                                for step in range(100):  # Number of optimization steps
+                                    optimizer.zero_grad()
+
+                                    # Compute the loss (example: cosine similarity loss)
+                                    track_embedding = track_embeddings[0, i * num_tracks + track_idx, :]
+                                    text_token = text_tokens[0, :]
+
+                                    # Normalize the embeddings
+                                    track_embedding_norm = track_embedding / track_embedding.norm(dim=0, keepdim=True)
+                                    text_token_norm = text_token / text_token.norm(dim=0, keepdim=True)
+
+                                    # Cosine similarity loss
+                                    loss = -torch.dot(track_embedding_norm, text_token_norm)
+
+                                    # Backpropagation
+                                    loss.backward()
+                                    optimizer.step()
+
+                                print(f"Optimization completed for track {track_idx} with final loss: {loss.item()}")
+                    else: 
+                        pass
+                        
 
         print()

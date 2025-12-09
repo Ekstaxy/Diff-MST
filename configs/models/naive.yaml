@@ -2,6 +2,7 @@ model:
   class_path: mst.system.System
   init_args:
     generate_mix: true
+    use_separate_tracks: false
     active_eq_epoch: 0
     active_compressor_epoch: 0
     active_fx_bus_epoch: 1000
@@ -27,26 +28,26 @@ model:
     model:
       class_path: mst.modules.MixStyleTransferModel
       init_args:
-        track_encoder: 
-          class_path: mst.modules.SpectrogramEncoder
-          init_args:
-            embed_dim: 512
-            n_fft: 2048
-            hop_length: 512
-            input_batchnorm: false
+        # track_encoder: 
+        #   class_path: mst.modules.SpectrogramEncoder
+        #   init_args:
+        #     embed_dim: 512
+        #     n_fft: 2048
+        #     hop_length: 512
+        #     input_batchnorm: false
         # track_encoder:
         #   class_path: mst.modules.SpatialCLAPEncoder
         #   init_args:
         #     joint_embed_shape: 512
         #     pretrained: true
         #     sample_rate: 44100
-        # track_encoder:
-        #   class_path: mst.modules.CLAPEncoder
-        #   init_args:
-        #     sample_rate: 44100
-        #     freeze: true
-        #     ckpt_path: /mnt/gestalt/home/rakec/checkpoint/CLAP/music_audioset_epoch_15_esc_90.14.pt
-        #     htsat_base: true
+        track_encoder:
+          class_path: mst.modules.CLAPEncoder
+          init_args:
+            sample_rate: 44100
+            freeze: true
+            ckpt_path: /mnt/gestalt/home/rakec/checkpoint/CLAP/music_audioset_epoch_15_esc_90.14.pt
+            htsat_base: true
         # mix_encoder: 
         #   class_path: mst.modules.SpectrogramEncoder
         #   init_args:
@@ -65,18 +66,19 @@ model:
           init_args:
             sample_rate: 44100
             freeze: true
-            use_projection: false
             ckpt_path: /mnt/gestalt/home/rakec/checkpoint/CLAP/music_audioset_epoch_15_esc_90.14.pt
             htsat_base: true
         controller:
           class_path: mst.modules.TransformerController
           init_args:
             embed_dim: 512
+            num_tracks: 8
             num_track_control_params: 27
             num_fx_bus_control_params: 25
             num_master_bus_control_params: 26
             num_layers: 12
             nhead: 8
+            train_only_proj_layer: false
         # controller:
         #   class_path: mst.modules.MLPController
         #   init_args:

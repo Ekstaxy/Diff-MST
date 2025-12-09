@@ -8,7 +8,7 @@ import pytorch_lightning as pl
 import time
 from typing import Callable
 from mst.mixing import knowledge_engineering_mix
-from mst.utils import batch_stereo_peak_normalize
+from mst.utils import batch_stereo_peak_normalize, batch_stereo_tracks_peak_normalize
 from mst.fx_encoder import FXencoder
 import pyloudnorm as pyln
 
@@ -21,6 +21,7 @@ class System(pl.LightningModule):
         mix_fn: Callable,
         loss: torch.nn.Module,
         generate_mix: bool = True,
+        use_separate_tracks: bool = False,
         use_track_loss: bool = False,
         use_mix_loss: bool = True,
         use_param_loss: bool = False,
@@ -41,6 +42,7 @@ class System(pl.LightningModule):
         self.mix_fn = mix_fn
         self.loss = loss
         self.generate_mix = generate_mix
+        self.use_separate_tracks = use_separate_tracks
         self.use_track_loss = use_track_loss
         self.use_mix_loss = use_mix_loss
         self.use_param_loss = use_param_loss
@@ -148,7 +150,7 @@ class System(pl.LightningModule):
         # --------- create a random mix (on GPU, if applicable) ---------
         if self.generate_mix:
             (
-                ref_mix_tracks,
+                ref_mix_tracks,  # (bs, 2, num_tracks, seq_len)
                 ref_mix,
                 ref_track_param_dict,
                 ref_fx_bus_param_dict,
@@ -174,6 +176,7 @@ class System(pl.LightningModule):
 
             # normalize the reference mix
             ref_mix = batch_stereo_peak_normalize(ref_mix)
+            ref_mix_tracks = batch_stereo_tracks_peak_normalize(ref_mix_tracks)
 
             if torch.isnan(ref_mix).any():
                 #print(ref_track_param_dict)
@@ -184,12 +187,22 @@ class System(pl.LightningModule):
             #     print("ref_mix is zero")
             #     raise ValueError("ref_mix is zero")
 
-            ref_mix_a = ref_mix[..., :middle_idx]  # this is passed to the model
+            if not self.use_separate_tracks:
+                ref_mix_a = ref_mix[..., :middle_idx]  # this is passed to the model
+            else:
+                ref_mix_a = ref_mix_tracks[..., :middle_idx]  # this is passed to the model
+                bs, ch, num_tracks, seq_len = ref_mix_a.shape
+                ref_mix_a = ref_mix_a.reshape(bs, ch * num_tracks, seq_len)  # reshape to (bs, num_tracks*2, seq_len)
             ref_mix_b = ref_mix[..., middle_idx:]  # this is used for loss computation
 
         else:
             # when using a real mix, pass the same mix to model and loss
-            ref_mix_a = ref_mix
+            if not self.use_separate_tracks:
+                ref_mix_a = ref_mix
+            else:
+                ref_mix_a = ref_mix_tracks
+                bs, ch, num_tracks, seq_len = ref_mix_a.shape
+                ref_mix_a = ref_mix_a.reshape(bs, ch * num_tracks, seq_len)  # reshape to (bs, num_tracks*2, seq_len)
             ref_mix_b = ref_mix
         
         
@@ -221,7 +234,7 @@ class System(pl.LightningModule):
         # --------- create a random mix (on GPU, if applicable) ---------
         if self.generate_mix:
             (
-                ref_mix_tracks,
+                ref_mix_tracks,  # (bs, 2, num_tracks, seq_len)
                 ref_mix,
                 ref_track_param_dict,
                 ref_fx_bus_param_dict,
@@ -247,22 +260,32 @@ class System(pl.LightningModule):
 
             # normalize the reference mix
             ref_mix = batch_stereo_peak_normalize(ref_mix)
+            ref_mix_tracks = batch_stereo_tracks_peak_normalize(ref_mix_tracks)
 
             if torch.isnan(ref_mix).any():
                 print(ref_track_param_dict)
                 raise ValueError("Found nan in ref_mix")
-
-            ref_mix_a = ref_mix[..., :middle_idx]  # this is passed to the model
+            
+            if not self.use_separate_tracks:
+                ref_mix_a = ref_mix[..., :middle_idx]  # this is passed to the model
+            else:
+                ref_mix_a = ref_mix_tracks[..., :middle_idx]  # this is passed to the model
+                bs, ch, num_tracks, seq_len = ref_mix_a.shape
+                ref_mix_a = ref_mix_a.reshape(bs, ch * num_tracks, seq_len)  # reshape to (bs, num_tracks*2, seq_len)
             ref_mix_b = ref_mix[..., middle_idx:]  # this is used for loss computation
             # tracks_a = tracks[..., :input_middle_idx] # not used currently
             tracks_b = tracks[..., middle_idx:]  # this is passed to the model
         else:
             # when using a real mix, pass the same mix to model and loss
-            ref_mix_a = ref_mix
+            if not self.use_separate_tracks:
+                ref_mix_a = ref_mix
+            else:
+                ref_mix_a = ref_mix_tracks
+                bs, ch, num_tracks, seq_len = ref_mix_a.shape
+                ref_mix_a = ref_mix_a.reshape(bs, ch * num_tracks, seq_len)  # reshape to (bs, num_tracks*2, seq_len)
             ref_mix_b = ref_mix
             tracks_b = tracks
 
-       
         #  ---- run model with tracks from section A using reference mix from section B ----
         (
             pred_track_params,
