@@ -1,6 +1,7 @@
 import torch
 import wandb
 import numpy as np
+import pyloudnorm as pyln
 import pytorch_lightning as pl
 
 
@@ -18,6 +19,8 @@ class LogAudioCallback(pl.callbacks.Callback):
         self.num_batches = num_batches
         self.peak_normalize = peak_normalize
         self.sample_rate = sample_rate
+
+        self.meter = pyln.Meter(sample_rate)
 
     def on_validation_batch_end(
         self,
@@ -64,7 +67,14 @@ class LogAudioCallback(pl.callbacks.Callback):
 
             x = audio[sample_idx, ...].float()
             x = x.permute(1, 0)
-            # x /= x.abs().max()
+            # normalize the audio to -16 dBFS
+            lufs_db = self.meter.integrated_loudness(x.numpy())
+            delta_lufs_db = torch.tensor(
+                [-16.0 - lufs_db]
+            ).float()
+            gain_lin = 10.0 ** (delta_lufs_db.clamp(-120, 40.0) / 20.0)
+            x = x * gain_lin
+
             audio_files.append(x)
             audio_keys.append(key)
             total_samples += x.shape[0]

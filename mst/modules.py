@@ -1,12 +1,23 @@
 import math
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torchaudio
+import numpy as np
+
 from typing import Callable, Optional, List
 from torchaudio.pipelines import HDEMUCS_HIGH_MUSDB_PLUS
 from mst.panns import Cnn14
 
+# For Spatial-CLAP and CLAP
+from mst.htsat import create_htsat_model
+from transformers import RobertaModel, RobertaTokenizer
+import laion_clap
+import torchaudio
+
 from dasp_pytorch.functional import (
     gain,
-    stereo_panner,
+    stereo_panner,  
     compressor,
     parametric_eq,
     stereo_bus,
@@ -41,7 +52,12 @@ class MixStyleTransferModel(torch.nn.Module):
         track_embeds = track_embeds.view(bs, num_tracks, -1)  # restore
 
         # compute mid/side from the reference mix
-        if self.sum_and_diff:
+        if self.mix_encoder.__class__.__name__ in ["SpatialCLAPEncoder"]:
+            mix_embed = self.mix_encoder(ref_mix)
+            mix_embeds = mix_embed.unsqueeze(1).repeat(1, 2, 1)
+        elif self.mix_encoder.__class__.__name__ in ["CLAPEncoder"]:
+            mix_embeds = self.mix_encoder(ref_mix)   
+        elif self.sum_and_diff:
             ref_mix_mid = ref_mix.sum(dim=1)
             ref_mix_side = ref_mix[..., 0:1, :] - ref_mix[..., 1:2, :]
 
@@ -591,22 +607,22 @@ class ParameterProjector(torch.nn.Module):
         return track_params, fx_bus_params, master_bus_params
 
 
-class WaveformEncoder(torch.nn.Module):
+# class WaveformEncoder(torch.nn.Module):
 
-    def __init__(
-        self,
-        n_inputs=1,
-        embed_dim: int = 1024,
-        encoder_batchnorm: bool = True,
-    ):
-        super().__init__()
-        self.n_inputs = n_inputs
-        self.embed_dim = embed_dim
-        self.encoder_batchnorm = encoder_batchnorm
-        self.model = TCN(n_inputs, embed_dim)
+#     def __init__(
+#         self,
+#         n_inputs=1,
+#         embed_dim: int = 1024,
+#         encoder_batchnorm: bool = True,
+#     ):
+#         super().__init__()
+#         self.n_inputs = n_inputs
+#         self.embed_dim = embed_dim
+#         self.encoder_batchnorm = encoder_batchnorm
+#         self.model = TCN(n_inputs, embed_dim)
 
-    def forward(self, x: torch.Tensor):
-        return self.model(x)
+#     def forward(self, x: torch.Tensor):
+#         return self.model(x)
 
 
 class PositionalEncoding(torch.nn.Module):
@@ -912,3 +928,411 @@ class TransformerController(torch.nn.Module):
         )
 
         return pred_track_params, pred_fx_bus_params, pred_master_bus_params
+
+
+class MLPController(torch.nn.Module):
+    def __init__(
+        self,
+        embed_dim: int,
+        num_tracks: int,
+        num_track_control_params: int,
+        num_fx_bus_control_params: int,
+        num_master_bus_control_params: int,
+        hidden_dim: int = 512,
+        num_layers: int = 3,
+        use_fx_bus: bool = False,
+        use_master_bus: bool = False,
+    ) -> None:
+        """MLP based Controller that predicts mix parameters given track and reference mix embeddings.
+
+        Args:
+            embed_dim (int): Embedding dim for tracks and mix.
+            num_tracks (int): Number of tracks.
+            num_track_control_params (int): Number of control parameters for each track.
+            num_fx_bus_control_params (int): Number of control parameters for fx bus.
+            num_master_bus_control_params (int): Number of control parameters for master bus.
+            hidden_dim (int): Hidden dimension for MLP layers.
+            num_layers (int): Number of hidden layers in the MLP.
+            use_fx_bus (bool): Whether to use the FX bus.
+            use_master_bus (bool): Whether to use the master bus.
+        """
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.num_track_control_params = num_track_control_params
+        self.num_fx_bus_control_params = num_fx_bus_control_params
+        self.num_master_bus_control_params = num_master_bus_control_params
+        self.hidden_dim = hidden_dim
+        self.num_layers = num_layers
+        self.use_fx_bus = use_fx_bus
+        self.use_master_bus = use_master_bus
+
+        # Learnable embeddings to distinguish different input types
+        self.track_embedding = torch.nn.Parameter(torch.randn(1, 1, embed_dim))
+        self.mix_embedding = torch.nn.Parameter(torch.randn(1, 2, embed_dim))
+        self.fx_bus_embedding = torch.nn.Parameter(torch.randn(1, 1, embed_dim))
+        self.master_bus_embedding = torch.nn.Parameter(torch.randn(1, 1, embed_dim))
+        
+        # Build MLP layers
+        layers = []
+        input_dim = embed_dim * (num_tracks + 4)
+        
+        # First layer
+        layers.append(torch.nn.Linear(input_dim, hidden_dim))
+        layers.append(torch.nn.ReLU())
+        layers.append(torch.nn.Dropout(0.1))
+        
+        # Hidden layers
+        for _ in range(num_layers - 2):
+            layers.append(torch.nn.Linear(hidden_dim, hidden_dim))
+            layers.append(torch.nn.ReLU())
+            layers.append(torch.nn.Dropout(0.1))
+        
+        # Output layer
+        layers.append(torch.nn.Linear(hidden_dim, input_dim))
+        layers.append(torch.nn.ReLU())
+        layers.append(torch.nn.Dropout(0.1))
+
+        self.mlp = torch.nn.Sequential(*layers)
+        
+        # Output projections
+        self.track_projection = torch.nn.Linear(embed_dim, num_track_control_params)
+        self.fx_bus_projection = torch.nn.Linear(embed_dim, num_fx_bus_control_params)
+        self.master_bus_projection = torch.nn.Linear(embed_dim, num_master_bus_control_params)
+
+    def forward(
+        self,
+        track_embeds: torch.torch.Tensor,
+        mix_embeds: torch.torch.Tensor,
+        track_padding_mask: Optional[torch.Tensor] = None,
+    ):
+        """Predict mix parameters given track and reference mix embeddings.
+
+        Args:
+            track_embeds (torch.torch.Tensor): Embeddings for each track with shape (bs, num_tracks, embed_dim)
+            mix_embeds (torch.torch.Tensor): Embeddings for the reference mix with shape (bs, 2, embed_dim)
+            track_padding_mask (Optional[torch.Tensor]): Mask for the track embeddings with shape (bs, num_tracks)
+
+        Returns:
+            pred_track_params (torch.torch.Tensor): Predicted track parameters with shape (bs, num_tracks, num_control_params)
+            pred_fx_bus_params (torch.torch.Tensor): Predicted fx bus parameters with shape (bs, num_fx_bus_control_params)
+            pred_master_bus_params (torch.torch.Tensor): Predicted master bus parameters with shape (bs, num_master_bus_control_params)
+        """
+        bs, num_tracks, embed_dim = track_embeds.size()
+
+        # Apply learned embeddings
+        track_embeds = track_embeds + self.track_embedding.repeat(bs, num_tracks, 1)
+        mix_embeds = mix_embeds + self.mix_embedding.repeat(bs, 1, 1)
+
+        # Mask padded tracks by setting them to zero
+        if track_padding_mask is not None:
+            # track_padding_mask: (bs, num_tracks), True for padded positions
+            mask = (~track_padding_mask).float().unsqueeze(-1)  # (bs, num_tracks, 1)
+            track_embeds = track_embeds * mask
+
+        # Concatenate all embeddings
+        combined_embeds = torch.cat(
+            [
+                track_embeds.view(bs, -1),  # (bs, num_tracks * embed_dim)
+                mix_embeds.view(bs, -1),    # (bs, 2 * embed_dim)
+                self.fx_bus_embedding.repeat(bs, 1, 1).view(bs, -1),  # (bs, embed_dim)
+                self.master_bus_embedding.repeat(bs, 1, 1).view(bs, -1)  # (bs, embed_dim)
+            ],
+            dim=-1
+        )  # (bs, total_embed_dim)
+        
+        # Pass through MLP
+        mlp_output = self.mlp(combined_embeds)  # (bs, total_embed_dim)
+        mlp_output = mlp_output.view(bs, -1, embed_dim) 
+
+        # Project to parameter spaces
+        pred_track_params = torch.sigmoid(
+            self.track_projection(mlp_output[:, :num_tracks, :])
+        )
+        pred_fx_bus_params = torch.sigmoid(
+            self.fx_bus_projection(mlp_output[:, -2, :])
+        )
+        pred_master_bus_params = torch.sigmoid(
+            self.master_bus_projection(mlp_output[:, -1, :])
+        )
+        
+        return pred_track_params, pred_fx_bus_params, pred_master_bus_params
+
+
+# ============================================================================================================================
+# Spatial-CLAP and CLAP encoder
+# ============================================================================================================================
+    
+class FeatureExtractor(nn.Module):
+    def __init__(self, input_ch=2, n_fft=1024, hop_length=512):
+        super(FeatureExtractor, self).__init__()
+        self.input_ch = input_ch
+        self.n_fft = n_fft
+        self.hop_length = hop_length
+        self.register_buffer('window', torch.hann_window(n_fft))
+
+    def forward(self, x):
+        """
+        x: (batch, channels=2, time)
+        returns: (batch, channels=2, time_frames, freq_bins)
+        """
+        batch_size, channels, time_len = x.shape
+        assert channels == self.input_ch, "Input must have 2 channels!"
+
+        # (batch, channels, time) -> (batch * channels, time)
+        x = x.view(batch_size * channels, time_len)
+
+        stft_output = torch.stft(
+            x, n_fft=self.n_fft, hop_length=self.hop_length,
+            window=self.window, return_complex=True
+        )  # (batch, channels, freq_bins, time_frames)
+        stft_output = stft_output.view(batch_size, channels, *stft_output.shape[-2:])  # (batch, channels, freq_bins, time_frames)
+
+        # Separate magnitude and phase
+        magnitude = torch.abs(stft_output)  # (batch, channels, freq_bins, time_frames)
+        phase = torch.angle(stft_output)    # (batch, channels, freq_bins, time_frames)
+
+        # Permute to (batch, time_frames, freq_bins, channels)
+        magnitude = magnitude.permute(0, 3, 2, 1)  # (batch, time_frames, freq_bins, channels)
+        phase = phase.permute(0, 3, 2, 1)
+
+        # Concatenate magnitude and phase along channel axis
+        features = torch.cat([magnitude, phase], dim=-1)  # (batch, time_frames, freq_bins, 2*channels)
+
+        return features
+    
+class Encoder(nn.Module):
+    def __init__(self, input_channels=2, cnn_channels=64, middle_features=128, output_features=256, n_fft=1024):
+        """
+        input_channels: 入力チャンネル数（ここでは4）
+        cnn_channels (P): CNNの中間フィルタ数
+        output_features (Q): 最終的な特徴量次元
+        """
+        super(Encoder, self).__init__()
+        assert (output_features % 2) == 0
+        self.output_features = output_features
+
+        self.cnn_block = nn.Sequential(
+            nn.Conv2d(input_channels, cnn_channels, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(cnn_channels),
+            nn.MaxPool2d(kernel_size=(1, 2)),
+
+            nn.Conv2d(cnn_channels, cnn_channels, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(cnn_channels),
+            nn.MaxPool2d(kernel_size=(1, 2)),
+
+            nn.Conv2d(cnn_channels, cnn_channels, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(cnn_channels),
+            nn.MaxPool2d(kernel_size=(1, 2)),
+        )
+
+        # CNN出力のfreq次元の縮小を正しく計算
+        self.freq_after_cnn = (n_fft // 2) // (2 ** 3)  # (n_fft/2)を3回半分にする
+        self.middle_linear = nn.Linear(cnn_channels * self.freq_after_cnn, middle_features)
+
+        self.gru = nn.GRU(
+            input_size=middle_features,
+            hidden_size=output_features // 2,
+            num_layers=2,
+            batch_first=True,
+            bidirectional=True
+        )
+        
+    def forward(self, x):
+        """
+        x: (batch, time_frames, freq_bins, channels=2)
+        returns: (batch, time_frames, output_features=Q)
+        """
+        batch_size, time_frames, freq_bins, channels = x.shape
+
+        # Prepare for CNN: permute to (batch, 2 * channels, time, freq)
+        x = x.permute(0, 3, 1, 2)  # (batch, 2 * channels, time, freq)
+
+        # CNN
+        x = self.cnn_block(x)  # (batch, cnn_channels, time, reduced_freq)
+
+        batch_size, cnn_channels, time_steps, freq_bins_reduced = x.size()
+
+        # Prepare for linear layer
+        x = x.permute(0, 2, 1, 3).contiguous()  # (batch, time_steps, channels, freq_bins_reduced)
+        x = x.view(batch_size, time_steps, -1)  # (batch, time_steps, channels * freq_bins_reduced)
+
+        # Project to output_features dimension (Q)
+        x = self.middle_linear(x)  # (batch, time_steps, middle_features)
+
+        x, _ = self.gru(x)          # (batch, time_steps, output_features)
+        x = torch.mean(x, dim=1)
+
+        return x
+
+class SELDModel(nn.Module):
+    def __init__(self,
+                 input_ch=2,
+                 n_fft=1024,
+                 hop_length=512,
+                 num_classes=10):
+        super(SELDModel, self).__init__()
+
+        self.feature_extractor = FeatureExtractor(n_fft=n_fft, hop_length=hop_length)
+        self.encoder = Encoder(input_channels=self.feature_extractor.input_ch*2)
+        
+    def forward(self, x):
+        """
+        x: (batch, channels=2, time)
+        returns:
+          - sed_output: (batch, time, num_classes)
+          - doa_output: (batch, time, num_classes*3)
+        """
+        features = self.feature_extractor(x)  # (batch, time, freq, ch)
+        encoded = self.encoder(features)      # (batch, encoder_output_size)
+
+        return encoded
+
+class AudioEncoder(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.mel_encoder = create_htsat_model()
+        self.spatial_encoder = SELDModel()
+        self.resampler = torchaudio.transforms.Resample(
+            orig_freq = 16000,
+            new_freq = 48000,
+        )
+
+        self.mel_feature_dim = 1024
+        self.spatial_feature_dim = 256
+    
+    def get_output_dim(self):
+        return self.mel_feature_dim + self.spatial_feature_dim
+
+    def load_default_state_dict(self):
+        self.mel_encoder.load_default_state_dict()
+        self.spatial_encoder.load_default_state_dict()
+
+    def forward(self, x):
+        B = len(x)
+
+        mel_encoded = self.mel_encoder({
+            "waveform": self.resampler((x[:, 0, :] + x[:, 1, :]) / 2)
+        })["embedding"]
+        assert mel_encoded.shape == (B, self.mel_feature_dim), f"{mel_encoded.shape=}"
+
+        spatial_encoded = self.spatial_encoder(x)
+        assert spatial_encoded.shape == (B, self.spatial_feature_dim), f"{spatial_encoded.shape=}"
+
+        return torch.cat(
+            [mel_encoded, spatial_encoded],
+            dim=1
+        )
+
+class SpatialCLAPEncoder(nn.Module):
+    def __init__(
+        self,
+        joint_embed_shape: int = 512,
+        pretrained: bool = True,
+        sample_rate: int = 44100
+    ):
+        super().__init__()
+
+        self.sample_rate = sample_rate
+        self.audio_encoder = AudioEncoder()
+        self.audio_projection = nn.Sequential(
+            nn.Linear(self.audio_encoder.get_output_dim(), joint_embed_shape),
+            nn.ReLU(),
+            nn.Linear(joint_embed_shape, joint_embed_shape),
+        )
+
+        self.logit_scale = nn.Parameter(torch.tensor(np.log(1 / (0.07))))
+
+        if pretrained:
+            self.load_pretrained()
+            for param in self.parameters():
+                param.requires_grad = False
+
+    def load_default_state_dict(self):
+        self.audio_encoder.load_default_state_dict()
+
+    def load_pretrained(self, url=None):
+        if url is None:
+            url = "https://huggingface.co/sarulab-speech/SpatialCLAP/resolve/main/ckpt/l1proposed-spatial_contrastive-model_epoch_49.pt"
+        ckpt = torch.hub.load_state_dict_from_url(url, map_location="cpu")["model_state_dict"]
+        self.load_state_dict(ckpt, strict=False)
+
+    def embed_audio(self, x):
+        encoded = self.audio_encoder(x)
+        projected_encoded = self.audio_projection(encoded)
+        return F.normalize(projected_encoded, dim=-1)
+
+    def forward(self, x: torch.Tensor):
+        """
+        Args:
+            x: Torch tensor of shape (batch_size, chs, seq_len)
+        Returns:
+            audio embeddings: Torch tensor of shape (batch_size, embed_dim)
+        """
+        resampler = torchaudio.transforms.Resample(
+            orig_freq = self.sample_rate,
+            new_freq = 16000,
+        ).to(x.device)
+
+        x = resampler(x)
+        z_audio = self.embed_audio(x)
+        
+        return z_audio
+    
+class CLAPEncoder(nn.Module):
+    def __init__(
+        self, sample_rate: int = 44100, freeze: bool = True, use_projection: bool = False, 
+        ckpt_path: Optional[str] = None, htsat_base: bool = False
+    ):
+        super().__init__()
+
+        self.sample_rate = sample_rate
+        if htsat_base:
+            self.model = laion_clap.CLAP_Module(enable_fusion=False, amodel="HTSAT-base")
+        else:
+            self.model = laion_clap.CLAP_Module(enable_fusion=False)
+        if ckpt_path is not None:
+            self.model.load_ckpt(ckpt_path)
+        else:
+            self.model.load_ckpt()
+        
+        if freeze:
+            for param in self.parameters():
+                param.requires_grad = False
+        
+        if use_projection:
+            self.projection = nn.Sequential(
+                nn.Linear(512, 2048),
+                nn.ReLU(),
+                nn.Linear(2048, 512),
+            )
+        else:
+            self.projection = None
+        
+    def forward(self, x: torch.torch.Tensor):
+        """
+        Args:
+            x: Torch tensor of shape (batch_size, chs, seq_len)
+        Returns:
+            audio embeddings: Torch tensor of shape (batch_size, embed_dim)
+        """
+        resampler = torchaudio.transforms.Resample(
+            orig_freq = self.sample_rate,
+            new_freq = 48000
+        ).to(x.device)
+
+        x = resampler(x)
+        bs, chs, seq_len = x.size()
+
+        x = x.view(bs * chs, seq_len)
+
+        X = self.model.get_audio_embedding_from_data(x = x, use_tensor = True)
+
+        if self.projection is not None:
+            X = self.projection(X)
+
+        X = X.view(bs, chs, -1)
+
+        return X

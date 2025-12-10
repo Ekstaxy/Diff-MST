@@ -3,6 +3,7 @@ import os
 import torch
 import torchaudio
 import pyloudnorm as pyln
+import argparse
 from mst.utils import load_diffmst, run_diffmst
 from mst.loss import compute_barkspectrum, compute_rms, compute_crest_factor, compute_stereo_width, compute_stereo_imbalance, AudioFeatureLoss
 import json
@@ -45,18 +46,50 @@ class NumpyEncoder(json.JSONEncoder):
         elif isinstance(obj, np.ndarray):
             return obj.tolist()
         return json.JSONEncoder.default(self, obj)
+    
+def parse_args():
+    parser = argparse.ArgumentParser(description='Evaluate Diff-MST model')
+    parser.add_argument('--device', type=str, default='cuda:0',
+                        help='Computation device')
+    
+    # Model paths
+    parser.add_argument('--config', type=str, required=True,
+                        help='Path to config.yaml')
+    parser.add_argument('--checkpoint', type=str, required=True,
+                        help='Path to model checkpoint')
+    
+    # Audio paths
+    parser.add_argument('--tracks', type=str, required=True,
+                        help='Path to tracks folder')
+    parser.add_argument('--reference', type=str, required=True,
+                        help='Path to reference mix WAV file')
+    
+    # Optional settings
+    parser.add_argument('--output', type=str, default='outputs/listen',
+                        help='Output directory')
+    parser.add_argument('--name', type=str, default='experiment',
+                        help='Experiment name')
+    parser.add_argument('--target-lufs', type=float, default=-22.0,
+                        help='Target output LUFS')
+    parser.add_argument('--ref-lufs', type=float, default=-16.0,
+                        help='Reference LUFS')
+    
+    return parser.parse_args()
 
 if __name__ == "__main__":
+    args = parse_args()
+
     meter = pyln.Meter(44100)
-    target_lufs_db = -22.0
-    output_dir = "outputs/listen"
+    target_lufs_db = args.target_lufs
+    output_dir = args.output
     os.makedirs(output_dir, exist_ok=True)
 
     methods = {
         "diffmst-16": {
             "model": load_diffmst(
-                "/Users/svanka/Downloads/b4naquji/config.yaml",
-                "/Users/svanka/Downloads/b4naquji/checkpoints/epoch=191-step=626608.ckpt",
+                args.config,
+                args.checkpoint,
+                map_location=args.device,
             ),
             "func": run_diffmst,
         },
@@ -77,8 +110,8 @@ if __name__ == "__main__":
         #     "ref": "/Users/svanka/Downloads//diffmst-examples/song2/ref/The Dip - Paddle To The Stars (Lyric Video)_01.wav",
         # },
         "haunted-aged": {
-            "tracks": "/Users/svanka/Downloads//diffmst-examples/song3/Titanium_HauntedAge_Full/",
-            "ref": "/Users/svanka/Downloads//diffmst-examples/song3/ref/Architects - _Doomsday__01.wav",
+            "tracks": args.tracks,
+            "ref": args.reference,
         },
     }
     loss = AudioFeatureLoss([0.1,0.001,1.0,1.0,0.1], 44100)
@@ -180,7 +213,7 @@ if __name__ == "__main__":
                 ref_analysis = ref_audio[..., ref_start_idx + j*441000 : ref_start_idx + (j+1)*441000]
 
                 # create mixes varying the loudness of the reference
-                for ref_loudness_target in [-16.0]:
+                for ref_loudness_target in [args.ref_lufs]:  # -16, -20, -24, -28
                     print("Ref loudness", ref_loudness_target)
                     ref_filepath = os.path.join(
                         example_dir,
@@ -212,6 +245,9 @@ if __name__ == "__main__":
                         model, mix_console = method["model"]
                         func = method["func"]
 
+                        model = model.to(args.device) if model is not None else None
+                        mix_console = mix_console.to(args.device) if mix_console is not None else None
+
                         #print(tracks.shape, ref_audio.shape)
                         audio_section = f"track-{i}-ref-{j}-lufs-{ref_loudness_target:0.0f}"
                         AF[example_name][method_name][audio_section] = {}
@@ -219,6 +255,7 @@ if __name__ == "__main__":
                         AF[example_name][method_name][audio_section]["track_stop_idx"] = track_start_idx + (i+1)*441000
                         AF[example_name][method_name][audio_section]["ref_start_idx"] = ref_start_idx + j*441000
                         AF[example_name][method_name][audio_section]["ref_stop_idx"] = ref_start_idx + (j+1)*441000
+
                         with torch.no_grad():
                             result = func(
                                 mix_tracks.clone(),

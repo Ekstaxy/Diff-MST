@@ -1,20 +1,20 @@
 seed_everything: 42
 # use ckpt_path to load a model from a checkpoint
-# ckpt_path: /import/c4dm-datasets-ext/diffmst_logs_soum/2021-10-06/14-00-00/checkpoints/epoch=0-step=0.ckpt
+ckpt_path: /mnt/gestalt/home/rakec/output/diff-mst/8tracks-clap-transformer-stage1/DiffMST_CLAP_Transformer/bhahxtcf/checkpoints/epoch=124-step=39125.ckpt
 trainer:
   logger: 
     class_path: pytorch_lightning.loggers.WandbLogger
     init_args:
-      project: DiffMST
-      #change to the directory where you want to save wandb logs
-      save_dir: /import/c4dm-datasets-ext/diffmst_logs_soum
+      project: DiffMST_CLAP_Transformer
+      # change to the directory where you want to save wandb logs
+      save_dir: /mnt/gestalt/home/rakec/output/diff-mst/8tracks-clap-transformer-stage2
   enable_checkpointing: true
   callbacks:
     - class_path: mst.callbacks.audio.LogAudioCallback
     - class_path: pytorch_lightning.callbacks.ModelSummary
       init_args: 
         max_depth: 2
-    #uncomment if you want to run validation on custom examples during training
+    # uncomment if you want to run validation on custom examples during training
     # - class_path: mst.callbacks.mix.LogReferenceMix
     #   init_args:
     #     root_dirs:
@@ -33,9 +33,9 @@ trainer:
   gradient_clip_val: 10.0
   devices: 1
   check_val_every_n_epoch: 1
-  max_epochs: 800
-  #change to log less or more often to wandb
-  log_every_n_steps: 500
+  max_epochs: 500
+  # change to log less or more often to wandb
+  log_every_n_steps: 50
   accelerator: gpu
   strategy: ddp_find_unused_parameters_true
   sync_batchnorm: true
@@ -43,6 +43,5 @@ trainer:
   enable_model_summary: true
   num_sanity_val_steps: 2
   benchmark: true
-  accumulate_grad_batches: 1
-  #reload_dataloaders_every_n_epochs: 1
-
+  accumulate_grad_batches: 4
+  # reload_dataloaders_every_n_epochs: 1
