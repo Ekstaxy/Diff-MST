@@ -192,7 +192,7 @@ class System(pl.LightningModule):
             else:
                 ref_mix_a = ref_mix_tracks[..., :middle_idx]  # this is passed to the model
                 bs, ch, num_tracks, seq_len = ref_mix_a.shape
-                ref_mix_a = ref_mix_a.contiguous().reshape(bs, ch * num_tracks, seq_len)  # reshape to (bs, num_tracks*2, seq_len)
+                ref_mix_a = ref_mix_a.reshape(bs, ch * num_tracks, seq_len)  # reshape to (bs, num_tracks*2, seq_len)
             ref_mix_b = ref_mix[..., middle_idx:]  # this is used for loss computation
 
         else:
@@ -202,7 +202,7 @@ class System(pl.LightningModule):
             else:
                 ref_mix_a = ref_mix_tracks
                 bs, ch, num_tracks, seq_len = ref_mix_a.shape
-                ref_mix_a = ref_mix_a.contiguous().reshape(bs, ch * num_tracks, seq_len)  # reshape to (bs, num_tracks*2, seq_len)
+                ref_mix_a = ref_mix_a.reshape(bs, ch * num_tracks, seq_len)  # reshape to (bs, num_tracks*2, seq_len)
             ref_mix_b = ref_mix
         
         
@@ -271,7 +271,7 @@ class System(pl.LightningModule):
             else:
                 ref_mix_a = ref_mix_tracks[..., :middle_idx]  # this is passed to the model
                 bs, ch, num_tracks, seq_len = ref_mix_a.shape
-                ref_mix_a = ref_mix_a.contiguous().reshape(bs, ch * num_tracks, seq_len)  # reshape to (bs, num_tracks*2, seq_len)
+                ref_mix_a = ref_mix_a.reshape(bs, ch * num_tracks, seq_len)  # reshape to (bs, num_tracks*2, seq_len)
             ref_mix_b = ref_mix[..., middle_idx:]  # this is used for loss computation
             # tracks_a = tracks[..., :input_middle_idx] # not used currently
             tracks_b = tracks[..., middle_idx:]  # this is passed to the model
@@ -282,7 +282,7 @@ class System(pl.LightningModule):
             else:
                 ref_mix_a = ref_mix_tracks
                 bs, ch, num_tracks, seq_len = ref_mix_a.shape
-                ref_mix_a = ref_mix_a.contiguous().reshape(bs, ch * num_tracks, seq_len)  # reshape to (bs, num_tracks*2, seq_len)
+                ref_mix_a = ref_mix_a.reshape(bs, ch * num_tracks, seq_len)  # reshape to (bs, num_tracks*2, seq_len)
             ref_mix_b = ref_mix
             tracks_b = tracks
 

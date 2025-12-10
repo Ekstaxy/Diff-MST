@@ -4,7 +4,9 @@ import argparse
 import torch
 import torchaudio
 import pyloudnorm as pyln
+import laion_clap
 from mst.utils import load_diffmst, run_diffmst
+import numpy as np
 
 
 def equal_loudness_mix(tracks: torch.Tensor, *args, **kwargs):
@@ -30,70 +32,21 @@ def equal_loudness_mix(tracks: torch.Tensor, *args, **kwargs):
     sum_mix = torch.sum(norm_tracks, dim=1, keepdim=True).repeat(1, 2, 1)
     sum_mix /= sum_mix.abs().max()
 
-    return sum_mix, None, None, None
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(description='Generate audio examples for listening test')
-    parser.add_argument('--device', type=str, default='cuda:0',
-                        help='Computation device')
-
-    # Model paths
-    parser.add_argument('--config', type=str, required=True,
-                        help='Path to config.yaml')
-    parser.add_argument('--checkpoint', type=str, required=True,
-                        help='Path to model checkpoint')
-
-    # Audio paths
-    parser.add_argument('--tracks', type=str, required=True,
-                        help='Path to tracks folder')
-    parser.add_argument('--reference', type=str, required=True,
-                        help='Path to reference mix WAV file')
-
-    # Optional settings
-    parser.add_argument('--output', type=str, default='outputs/listen',
-                        help='Output directory')
-    parser.add_argument('--name', type=str, default='experiment',
-                        help='Experiment name')
-    parser.add_argument('--target-lufs', type=float, default=-22.0,
-                        help='Target output LUFS')
-
-    # Verse/Chorus indices
-    parser.add_argument('--track-verse-idx', type=int, required=True,
-                        help='Track verse start index (samples)')
-    parser.add_argument('--track-chorus-idx', type=int, required=True,
-                        help='Track chorus start index (samples)')
-    parser.add_argument('--ref-verse-idx', type=int, required=True,
-                        help='Reference verse start index (samples)')
-    parser.add_argument('--ref-chorus-idx', type=int, required=True,
-                        help='Reference chorus start index (samples)')
-
-    return parser.parse_args()
+    return sum_mix, None, None, None, None
 
 
 if __name__ == "__main__":
     args = parse_args()
 
     meter = pyln.Meter(44100)
-    target_lufs_db = args.target_lufs
-    output_dir = args.output
+    target_lufs_db = -22.0
+    output_dir = "outputs/listen_1"
+    use_text_optimize = True
     os.makedirs(output_dir, exist_ok=True)
-
-    # Load model
-    print(f"Loading model to {args.device}...")
-    model, mix_console = load_diffmst(
-        args.config,
-        args.checkpoint,
-        map_location=args.device,
-    )
-
-    # Move to device
-    model = model.to(args.device)
-    mix_console = mix_console.to(args.device)
-    model.eval()
-    mix_console.eval()
-
-    print(f"✓ Model loaded on {args.device}")
+    clap_model = laion_clap.CLAP_Module(enable_fusion=True)
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    optimize_option = "slerp"
+    # optimize_option = "ADAM"
 
     methods = {
         "diffmst-16": {
@@ -269,12 +222,13 @@ if __name__ == "__main__":
                         ref_start_idx=ref_start_idx,
                     )
 
-                    (
-                        pred_mix,
-                        pred_track_param_dict,
-                        pred_fx_bus_param_dict,
-                        pred_master_bus_param_dict,
-                    ) = result
+                        (
+                            pred_mix,
+                            pred_track_param_dict,
+                            pred_fx_bus_param_dict,
+                            pred_master_bus_param_dict,
+                            pred_mixed_tracks,
+                        ) = result
 
                 bs, chs, seq_len = pred_mix.shape
 
@@ -306,10 +260,92 @@ if __name__ == "__main__":
                 print(mix_lufs_db)
                 mix_analysis = mix_analysis * 10 ** (lufs_delta_db / 20)
 
-                mix_filepath = os.path.join(
-                    example_dir,
-                    f"{example_name}-{method_name}-analysis-{song_section}-lufs-{ref_loudness_target:0.0f}.wav",
-                )
-                torchaudio.save(mix_filepath, mix_analysis.view(chs, -1), 44100)
+                    mix_filepath = os.path.join(
+                        example_dir,
+                        f"{example_name}-{method_name}-analysis-{song_section}-lufs-{ref_loudness_target:0.0f}.wav",
+                    )
+                    torchaudio.save(mix_filepath, mix_analysis.view(chs, -1), 44100)
+                    
+                    if method_name == "diffmst-16" and use_text_optimize:
+                        track_idx = 0
+                        text = "Make it sound brighter"
+                        text_tokens = clap_model.get_text_tokens([text], device=device)
+                        
+                        # pred_mixed_tracks: batchsize, 2, num_tracks, seq_len
+                        # projection layer: batchsize, 2*num_tracks, seq_len
+                        # in inference, batchsize = 1
+                        
+
+                        # pred_mixed_tracks: (bs, 2, num_tracks, seq_len)
+                        bs, chs, num_tracks, seq_len = pred_mixed_tracks.shape
+
+                        track_embeddings = []
+                        for b in range(bs):
+                            audio_batch = []
+                            for c in range(chs):
+                                for t in range(num_tracks):
+                                    # build a batch of mono waveforms for this track
+                                    waveform = pred_mixed_tracks[b, c, t, :]
+                                    audio_batch.append(waveform)
+                            audio_batch = torch.stack(audio_batch, dim=0).to(device)  # (2*num_tracks, seq_len)
+                            # get the embeddings for this batch
+                            batch_track_embeddings = clap_model.get_audio_embedding(audio_batch, use_tensor=True) # (2*num_tracks, D)
+                        
+                            track_embeddings.append(batch_track_embeddings)
+                        # stack into (bs, num_tracks, D)
+                        track_embeddings = torch.stack(track_embeddings, dim=0) # (bs, 2*num_tracks, D)                        
+                        
+                        if optimize_option == "slerp":
+                            alpha = 0.2
+                            for i in range(2):
+                                track_embedding = track_embeddings[0, i * num_tracks + track_idx, :]  # (D,)
+                                text_token = text_tokens[0, :]  # (token_len,)
+
+                                # normalize the embeddings
+                                track_embedding_norm = track_embedding / track_embedding.norm(dim=0, keepdim=True)
+                                text_token_norm = text_token / text_token.norm(dim=0, keepdim=True)
+
+                                # slerp interpolation
+                                omega = torch.acos(torch.clamp(torch.dot(track_embedding_norm, text_token_norm), -1.0, 1.0))
+                                so = torch.sin(omega)
+                                if so == 0:
+                                    slerp_embedding = track_embedding
+                                else:
+                                    slerp_embedding = (torch.sin((1.0 - alpha) * omega) / so) * track_embedding + (torch.sin(alpha * omega) / so) * text_embedding
+
+                                # replace the embedding
+                                track_embeddings[0, i * num_tracks + track_idx, :] = slerp_embedding
+                                
+                            
+                        elif optimize_option == "ADAM":
+                            for i in range(2):
+                                # Define the optimizer for the track embeddings
+                                optimizer = torch.optim.Adam(
+                                    [track_embeddings[0, i * num_tracks + track_idx, :]], lr=1e-3
+                                )
+
+                                # Optimization loop
+                                for step in range(100):  # Number of optimization steps
+                                    optimizer.zero_grad()
+
+                                    # Compute the loss (example: cosine similarity loss)
+                                    track_embedding = track_embeddings[0, i * num_tracks + track_idx, :]
+                                    text_token = text_tokens[0, :]
+
+                                    # Normalize the embeddings
+                                    track_embedding_norm = track_embedding / track_embedding.norm(dim=0, keepdim=True)
+                                    text_token_norm = text_token / text_token.norm(dim=0, keepdim=True)
+
+                                    # Cosine similarity loss
+                                    loss = -torch.dot(track_embedding_norm, text_token_norm)
+
+                                    # Backpropagation
+                                    loss.backward()
+                                    optimizer.step()
+
+                                print(f"Optimization completed for track {track_idx} with final loss: {loss.item()}")
+                    else: 
+                        pass
+                        
 
     print()

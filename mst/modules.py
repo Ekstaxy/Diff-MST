@@ -826,6 +826,7 @@ class TransformerController(torch.nn.Module):
     def __init__(
         self,
         embed_dim: int,
+        num_tracks: int,
         num_track_control_params: int,
         num_fx_bus_control_params: int,
         num_master_bus_control_params: int,
@@ -857,18 +858,11 @@ class TransformerController(torch.nn.Module):
         self.use_master_bus = use_master_bus
         self.train_only_proj_layer = train_only_proj_layer
 
-        # Project ref_mix_tracks into shape of ref_mix using attention
-        self.mix_query = torch.nn.Parameter(torch.randn(1, 2, embed_dim))
-        proj_layer = torch.nn.TransformerEncoderLayer(
-            d_model=embed_dim, nhead=8, batch_first=True, dropout=0.0
-        )
-        self.mix_transformer = torch.nn.TransformerEncoder(
-            proj_layer, 
-            num_layers=3
-        )
-        self.mix_adapter = torch.nn.Sequential(
-            torch.nn.Linear(embed_dim, embed_dim * 4),
+        # Project ref_mix_tracks into shape of ref_mix
+        self.proj_layer = torch.nn.Sequential(
+            torch.nn.Linear(embed_dim * num_tracks, embed_dim * 4),
             torch.nn.ReLU(),
+            torch.nn.Dropout(0.1),
             torch.nn.Linear(embed_dim * 4, embed_dim)
         )
 
@@ -892,14 +886,10 @@ class TransformerController(torch.nn.Module):
         )
 
         if self.train_only_proj_layer:
-            # Freeze all parameters except query & attention for ref_mix projection
             for param in self.parameters():
                 param.requires_grad = False
-            for param in self.mix_transformer.parameters():
+            for param in self.proj_layer.parameters():
                 param.requires_grad = True
-            for param in self.mix_adapter.parameters():
-                param.requires_grad = True
-            self.mix_query.requires_grad = True
 
     def forward(
         self,
@@ -922,45 +912,13 @@ class TransformerController(torch.nn.Module):
         bs, num_tracks, embed_dim = track_embeds.size()
 
         if mix_embeds.size(1) != 2:
-            # mix_embeds comes in as (bs, 2 * num_tracks, embed_dim)
-            flat_tracks = mix_embeds 
-            left_tracks = flat_tracks[:, :num_tracks, :] # (bs, num_tracks, embed_dim)
-            right_tracks = flat_tracks[:, num_tracks:, :] # (bs, num_tracks, embed_dim)
-
-            # 1. Prepare Queries (CLS tokens)
-            # Expand query to batch size: (bs, 1, embed_dim)
-            query_L = self.mix_query[:, 0:1, :].repeat(bs, 1, 1)
-            query_R = self.mix_query[:, 1:2, :].repeat(bs, 1, 1)
-
-            # 2. Construct Sequences: [Query, Track1, Track2, ...]
-            # Shape becomes (bs, num_tracks + 1, embed_dim)
-            input_L = torch.cat([query_L, left_tracks], dim=1)
-            input_R = torch.cat([query_R, right_tracks], dim=1)
-
-            # 3. Create Padding Mask
-            # We must prepend 'False' (unmasked) for the query token
-            if track_padding_mask is not None:
-                # track_padding_mask is (bs, num_tracks), True = Padded
-                # Create (bs, 1) of False
-                cls_mask = torch.zeros((bs, 1), dtype=torch.bool, device=track_embeds.device)
-                
-                # Concat: [False, mask_t1, mask_t2...]
-                mix_mask = torch.cat([cls_mask, track_padding_mask], dim=1)
-            else:
-                mix_mask = None
-
-            # 4. Pass through Transformer
-            # The Transformer allows tracks to attend to each other AND the query to attend to tracks
-            encoded_L = self.mix_transformer(input_L, src_key_padding_mask=mix_mask)
-            encoded_R = self.mix_transformer(input_R, src_key_padding_mask=mix_mask)
-
-            # 5. Extract the Query Token (Index 0)
-            # This token now contains the aggregated information
-            left_mix_embed = self.mix_adapter(encoded_L[:, 0:1, :]) 
-            right_mix_embed = self.mix_adapter(encoded_R[:, 0:1, :])    
-            
-            # Recombine to (bs, 2, embed_dim)
-            mix_embeds = torch.cat([left_mix_embed, right_mix_embed], dim=1)
+            # Use projection layer
+            # view from (bs, num_tracks*2, embed_dim) to (bs, 2, num_tracks * embed_dim)
+            # Reshape: (bs, num_tracks*2, embed_dim) -> (bs, num_tracks, 2, embed_dim)
+            mix_embeds = mix_embeds.view(bs, 2, num_tracks, embed_dim)
+            mix_embeds = mix_embeds.view(bs, 2, num_tracks * embed_dim)
+            # Project to (bs, 2, embed_dim)
+            mix_embeds = self.proj_layer(mix_embeds)
 
         # apply learned embeddings to both input embeddings
         track_embeds += self.track_embedding.repeat(bs, num_tracks, 1)
@@ -1265,3 +1223,4 @@ class CLAPEncoder(nn.Module):
         X = X.view(bs, chs, -1)
 
         return X
+    

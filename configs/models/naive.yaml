@@ -66,10 +66,6 @@ model:
           init_args:
             sample_rate: 44100
             freeze: true
-<<<<<<< HEAD
-            use_projection: false
-            ckpt_path: /kaggle/working/Diff-MST/music_audioset_epoch_15_esc_90.14.pt
-=======
             ckpt_path: /mnt/gestalt/home/rakec/checkpoint/CLAP/music_audioset_epoch_15_esc_90.14.pt
 >>>>>>> a32e78de3a9ff929e40f2dd22ad2f4e6ebaa082a
             htsat_base: true
@@ -77,12 +73,23 @@ model:
           class_path: mst.modules.TransformerController
           init_args:
             embed_dim: 512
+            num_tracks: 8
             num_track_control_params: 27
             num_fx_bus_control_params: 25
             num_master_bus_control_params: 26
             num_layers: 12
             nhead: 8
             train_only_proj_layer: false
+        # controller:
+        #   class_path: mst.modules.MLPController
+        #   init_args:
+        #     embed_dim: 512
+        #     num_tracks: 8
+        #     num_track_control_params: 27
+        #     num_fx_bus_control_params: 25
+        #     num_master_bus_control_params: 26
+        #     hidden_dim: 2048
+        #     num_layers: 3
        
     loss: 
       class_path: auraloss.freq.SumAndDifferenceSTFTLoss

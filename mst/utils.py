@@ -43,7 +43,6 @@ def batch_stereo_tracks_peak_normalize(x: torch.Tensor):
     gain_lin = mix.abs().max(dim=-1, keepdim=True)[0]
     # then find the maximum peak across left and right per batch item
     gain_lin = gain_lin.max(dim=-2, keepdim=True)[0]
-    gain_lin = gain_lin.unsqueeze(2)
     # normalize by the maximum peak
     x_norm = x / gain_lin.clamp(1e-8)  # avoid division by zero
     return x_norm
@@ -189,6 +188,7 @@ def run_diffmst(
         pred_track_param_dict,
         pred_fx_bus_param_dict,
         pred_master_bus_param_dict,
+        pred_mixed_tracks,
     )
 
 
@@ -253,7 +253,7 @@ def load_diffmst(config_path: str, ckpt_path: str, map_location: str = "cpu"):
     for k, v in checkpoint["state_dict"].items():
         if k.startswith("model.mix_encoder"):
             state_dict[k.replace("model.mix_encoder.", "", 1)] = v
-    mix_encoder.load_state_dict(state_dict)
+    mix_encorde.load_state_dict(state_dict)
 
     state_dict = {}
     for k, v in checkpoint["state_dict"].items():
