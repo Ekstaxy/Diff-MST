@@ -160,7 +160,7 @@ def main():
 
         ref_analysis = ref_audio[..., ref_start_idx : ref_start_idx + 44100 * 10]
 
-        for ref_loudness_target in [-24.0, -16.0, -14.0, -12.0, -6.0]:
+        for ref_loudness_target in [-16.0]:
             print(f"[INFO] Ref LUFS: {ref_loudness_target} dB")
             ref_filepath = output_dir / f"ref_{song_section}_lufs{int(ref_loudness_target)}.wav"
 
