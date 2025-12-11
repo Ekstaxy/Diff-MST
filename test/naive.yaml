@@ -47,7 +47,7 @@ model:
           init_args:
             sample_rate: 44100
             freeze: true
-            ckpt_path: /mnt/gestalt/home/rakec/checkpoint/CLAP/music_audioset_epoch_15_esc_90.14.pt
+            ckpt_path: /kaggle/working/music_audioset_epoch_15_esc_90.14.pt
             htsat_base: true
         # mix_encoder: 
         #   class_path: mst.modules.SpectrogramEncoder
@@ -68,7 +68,7 @@ model:
           init_args:
             sample_rate: 44100
             freeze: true
-            ckpt_path: /mnt/gestalt/home/rakec/checkpoint/CLAP/music_audioset_epoch_15_esc_90.14.pt
+            ckpt_path: /kaggle/working/music_audioset_epoch_15_esc_90.14.pt
             htsat_base: true
         controller:
           class_path: mst.modules.TransformerController
