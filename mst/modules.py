@@ -762,6 +762,7 @@ class SpectrogramEncoder(torch.nn.Module):
         hop_length: int = 512,
         input_batchnorm: bool = False,
         encoder_batchnorm: bool = True,
+        freeze: bool = False,
     ) -> None:
         super().__init__()
         self.embed_dim = embed_dim
@@ -784,6 +785,10 @@ class SpectrogramEncoder(torch.nn.Module):
         else:
             self.bn = torch.nn.Identity()
 
+        if freeze:
+            for param in self.model.parameters():
+                param.requires_grad = False
+
     def forward(self, x: torch.torch.Tensor) -> torch.torch.Tensor:
         """Process waveform as a spectrogram and return single embedding.
 
@@ -791,7 +796,7 @@ class SpectrogramEncoder(torch.nn.Module):
             x (torch.torch.Tensor): Monophonic waveform torch.Tensor of shape (bs, chs, seq_len).
 
         Returns:
-            embed (torch.Tenesor): Embedding torch.Tensor of shape (bs, embed_dim)
+            embed (torch.Tensor): Embedding torch.Tensor of shape (bs, embed_dim)
         """
 
         bs, chs, seq_len = x.size()
@@ -833,6 +838,8 @@ class TransformerController(torch.nn.Module):
         nhead: int = 8,
         use_fx_bus: bool = False,
         use_master_bus: bool = False,
+        train_only_proj_layer: bool = False,
+        freeze_proj_layer: bool = False,
     ) -> None:
         """Transformer based Controller that predicts mix parameters given track and reference mix embeddings.
 
@@ -843,6 +850,7 @@ class TransformerController(torch.nn.Module):
             nhead (int): Number of attention heads in each layer.
             use_fx_bus (bool): Whether to use the FX bus.
             use_master_bus (bool): Whether to use the master bus.
+            train_only_proj_layer (bool): Whether to only train the projection layer.
         """
         super().__init__()
         self.embed_dim = embed_dim
@@ -853,6 +861,18 @@ class TransformerController(torch.nn.Module):
         self.nhead = nhead
         self.use_fx_bus = use_fx_bus
         self.use_master_bus = use_master_bus
+        self.train_only_proj_layer = train_only_proj_layer
+
+        # Project ref_mix_tracks into shape of ref_mix using attention
+        self.mix_query = torch.nn.Parameter(torch.randn(1, 2, embed_dim))
+        proj_layer = torch.nn.TransformerEncoderLayer(
+            d_model=embed_dim, nhead=8, batch_first=True, dropout=0.0
+        )
+        self.mix_transformer = torch.nn.TransformerEncoder(
+            proj_layer, 
+            num_layers=3
+        )
+        self.mix_adapter = torch.nn.Linear(embed_dim, embed_dim)
 
         self.track_embedding = torch.nn.Parameter(torch.randn(1, 1, embed_dim))
         self.mix_embedding = torch.nn.Parameter(torch.randn(1, 2, embed_dim))
@@ -873,6 +893,23 @@ class TransformerController(torch.nn.Module):
             embed_dim, num_master_bus_control_params
         )
 
+        if self.train_only_proj_layer:
+            # Freeze all parameters except mix projection parts
+            for param in self.parameters():
+                param.requires_grad = False
+            for param in self.mix_transformer.parameters():
+                param.requires_grad = True
+            for param in self.mix_adapter.parameters():
+                param.requires_grad = True
+            self.mix_query.requires_grad = True
+        
+        if freeze_proj_layer:
+            for param in self.mix_transformer.parameters():
+                param.requires_grad = False
+            for param in self.mix_adapter.parameters():
+                param.requires_grad = False
+            self.mix_query.requires_grad = False
+
     def forward(
         self,
         track_embeds: torch.torch.Tensor,
@@ -892,6 +929,47 @@ class TransformerController(torch.nn.Module):
             pred_master_bus_params (torch.torch.Tensor): Predicted master bus parameters with shape (bs, num_master_bus_control_params)
         """
         bs, num_tracks, embed_dim = track_embeds.size()
+
+        if mix_embeds.size(1) != 2:
+            # mix_embeds comes in as (bs, 2 * num_tracks, embed_dim)
+            flat_tracks = mix_embeds 
+            left_tracks = flat_tracks[:, :num_tracks, :] # (bs, num_tracks, embed_dim)
+            right_tracks = flat_tracks[:, num_tracks:, :] # (bs, num_tracks, embed_dim)
+
+            # 1. Prepare Queries (CLS tokens)
+            # Expand query to batch size: (bs, 1, embed_dim)
+            query_L = self.mix_query[:, 0:1, :].repeat(bs, 1, 1)
+            query_R = self.mix_query[:, 1:2, :].repeat(bs, 1, 1)
+
+            # 2. Construct Sequences: [Query, Track1, Track2, ...]
+            # Shape becomes (bs, num_tracks + 1, embed_dim)
+            input_L = torch.cat([query_L, left_tracks], dim=1)
+            input_R = torch.cat([query_R, right_tracks], dim=1)
+
+            # 3. Create Padding Mask
+            # We must prepend 'False' (unmasked) for the query token
+            if track_padding_mask is not None:
+                # track_padding_mask is (bs, num_tracks), True = Padded
+                # Create (bs, 1) of False
+                cls_mask = torch.zeros((bs, 1), dtype=torch.bool, device=track_embeds.device)
+                
+                # Concat: [False, mask_t1, mask_t2...]
+                mix_mask = torch.cat([cls_mask, track_padding_mask], dim=1)
+            else:
+                mix_mask = None
+
+            # 4. Pass through Transformer
+            # The Transformer allows tracks to attend to each other AND the query to attend to tracks
+            encoded_L = self.mix_transformer(input_L, src_key_padding_mask=mix_mask)
+            encoded_R = self.mix_transformer(input_R, src_key_padding_mask=mix_mask)
+
+            # 5. Extract the Query Token (Index 0)
+            # This token now contains the aggregated information
+            left_mix_embed = self.mix_adapter(encoded_L[:, 0:1, :]) 
+            right_mix_embed = self.mix_adapter(encoded_R[:, 0:1, :])    
+            
+            # Recombine to (bs, 2, embed_dim)
+            mix_embeds = torch.cat([left_mix_embed, right_mix_embed], dim=1)
 
         # apply learned embeddings to both input embeddings
         track_embeds += self.track_embedding.repeat(bs, num_tracks, 1)
@@ -927,134 +1005,6 @@ class TransformerController(torch.nn.Module):
             self.master_bus_projection(pred_params[:, -1, :])
         )
 
-        return pred_track_params, pred_fx_bus_params, pred_master_bus_params
-
-
-class MLPController(torch.nn.Module):
-    def __init__(
-        self,
-        embed_dim: int,
-        num_tracks: int,
-        num_track_control_params: int,
-        num_fx_bus_control_params: int,
-        num_master_bus_control_params: int,
-        hidden_dim: int = 512,
-        num_layers: int = 3,
-        use_fx_bus: bool = False,
-        use_master_bus: bool = False,
-    ) -> None:
-        """MLP based Controller that predicts mix parameters given track and reference mix embeddings.
-
-        Args:
-            embed_dim (int): Embedding dim for tracks and mix.
-            num_tracks (int): Number of tracks.
-            num_track_control_params (int): Number of control parameters for each track.
-            num_fx_bus_control_params (int): Number of control parameters for fx bus.
-            num_master_bus_control_params (int): Number of control parameters for master bus.
-            hidden_dim (int): Hidden dimension for MLP layers.
-            num_layers (int): Number of hidden layers in the MLP.
-            use_fx_bus (bool): Whether to use the FX bus.
-            use_master_bus (bool): Whether to use the master bus.
-        """
-        super().__init__()
-        self.embed_dim = embed_dim
-        self.num_track_control_params = num_track_control_params
-        self.num_fx_bus_control_params = num_fx_bus_control_params
-        self.num_master_bus_control_params = num_master_bus_control_params
-        self.hidden_dim = hidden_dim
-        self.num_layers = num_layers
-        self.use_fx_bus = use_fx_bus
-        self.use_master_bus = use_master_bus
-
-        # Learnable embeddings to distinguish different input types
-        self.track_embedding = torch.nn.Parameter(torch.randn(1, 1, embed_dim))
-        self.mix_embedding = torch.nn.Parameter(torch.randn(1, 2, embed_dim))
-        self.fx_bus_embedding = torch.nn.Parameter(torch.randn(1, 1, embed_dim))
-        self.master_bus_embedding = torch.nn.Parameter(torch.randn(1, 1, embed_dim))
-        
-        # Build MLP layers
-        layers = []
-        input_dim = embed_dim * (num_tracks + 4)
-        
-        # First layer
-        layers.append(torch.nn.Linear(input_dim, hidden_dim))
-        layers.append(torch.nn.ReLU())
-        layers.append(torch.nn.Dropout(0.1))
-        
-        # Hidden layers
-        for _ in range(num_layers - 2):
-            layers.append(torch.nn.Linear(hidden_dim, hidden_dim))
-            layers.append(torch.nn.ReLU())
-            layers.append(torch.nn.Dropout(0.1))
-        
-        # Output layer
-        layers.append(torch.nn.Linear(hidden_dim, input_dim))
-        layers.append(torch.nn.ReLU())
-        layers.append(torch.nn.Dropout(0.1))
-
-        self.mlp = torch.nn.Sequential(*layers)
-        
-        # Output projections
-        self.track_projection = torch.nn.Linear(embed_dim, num_track_control_params)
-        self.fx_bus_projection = torch.nn.Linear(embed_dim, num_fx_bus_control_params)
-        self.master_bus_projection = torch.nn.Linear(embed_dim, num_master_bus_control_params)
-
-    def forward(
-        self,
-        track_embeds: torch.torch.Tensor,
-        mix_embeds: torch.torch.Tensor,
-        track_padding_mask: Optional[torch.Tensor] = None,
-    ):
-        """Predict mix parameters given track and reference mix embeddings.
-
-        Args:
-            track_embeds (torch.torch.Tensor): Embeddings for each track with shape (bs, num_tracks, embed_dim)
-            mix_embeds (torch.torch.Tensor): Embeddings for the reference mix with shape (bs, 2, embed_dim)
-            track_padding_mask (Optional[torch.Tensor]): Mask for the track embeddings with shape (bs, num_tracks)
-
-        Returns:
-            pred_track_params (torch.torch.Tensor): Predicted track parameters with shape (bs, num_tracks, num_control_params)
-            pred_fx_bus_params (torch.torch.Tensor): Predicted fx bus parameters with shape (bs, num_fx_bus_control_params)
-            pred_master_bus_params (torch.torch.Tensor): Predicted master bus parameters with shape (bs, num_master_bus_control_params)
-        """
-        bs, num_tracks, embed_dim = track_embeds.size()
-
-        # Apply learned embeddings
-        track_embeds = track_embeds + self.track_embedding.repeat(bs, num_tracks, 1)
-        mix_embeds = mix_embeds + self.mix_embedding.repeat(bs, 1, 1)
-
-        # Mask padded tracks by setting them to zero
-        if track_padding_mask is not None:
-            # track_padding_mask: (bs, num_tracks), True for padded positions
-            mask = (~track_padding_mask).float().unsqueeze(-1)  # (bs, num_tracks, 1)
-            track_embeds = track_embeds * mask
-
-        # Concatenate all embeddings
-        combined_embeds = torch.cat(
-            [
-                track_embeds.view(bs, -1),  # (bs, num_tracks * embed_dim)
-                mix_embeds.view(bs, -1),    # (bs, 2 * embed_dim)
-                self.fx_bus_embedding.repeat(bs, 1, 1).view(bs, -1),  # (bs, embed_dim)
-                self.master_bus_embedding.repeat(bs, 1, 1).view(bs, -1)  # (bs, embed_dim)
-            ],
-            dim=-1
-        )  # (bs, total_embed_dim)
-        
-        # Pass through MLP
-        mlp_output = self.mlp(combined_embeds)  # (bs, total_embed_dim)
-        mlp_output = mlp_output.view(bs, -1, embed_dim) 
-
-        # Project to parameter spaces
-        pred_track_params = torch.sigmoid(
-            self.track_projection(mlp_output[:, :num_tracks, :])
-        )
-        pred_fx_bus_params = torch.sigmoid(
-            self.fx_bus_projection(mlp_output[:, -2, :])
-        )
-        pred_master_bus_params = torch.sigmoid(
-            self.master_bus_projection(mlp_output[:, -1, :])
-        )
-        
         return pred_track_params, pred_fx_bus_params, pred_master_bus_params
 
 
@@ -1283,7 +1233,7 @@ class SpatialCLAPEncoder(nn.Module):
     
 class CLAPEncoder(nn.Module):
     def __init__(
-        self, sample_rate: int = 44100, freeze: bool = True, use_projection: bool = False, 
+        self, sample_rate: int = 44100, freeze: bool = True, 
         ckpt_path: Optional[str] = None, htsat_base: bool = False
     ):
         super().__init__()
@@ -1301,15 +1251,6 @@ class CLAPEncoder(nn.Module):
         if freeze:
             for param in self.parameters():
                 param.requires_grad = False
-        
-        if use_projection:
-            self.projection = nn.Sequential(
-                nn.Linear(512, 2048),
-                nn.ReLU(),
-                nn.Linear(2048, 512),
-            )
-        else:
-            self.projection = None
         
     def forward(self, x: torch.torch.Tensor):
         """
@@ -1329,9 +1270,6 @@ class CLAPEncoder(nn.Module):
         x = x.view(bs * chs, seq_len)
 
         X = self.model.get_audio_embedding_from_data(x = x, use_tensor = True)
-
-        if self.projection is not None:
-            X = self.projection(X)
 
         X = X.view(bs, chs, -1)
 

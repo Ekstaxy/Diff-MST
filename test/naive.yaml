@@ -1,19 +1,16 @@
 model:
   class_path: mst.system.System
   init_args:
-    # generate random mixes as specified in Method 1 of the paper ; True for Method 1, False for Method 2
     generate_mix: true
     use_separate_tracks: false
-    # set the epoch values very high to disable any of the effects during training; fx_bus corresponds to reverb module. 
     active_eq_epoch: 0
     active_compressor_epoch: 0
     active_fx_bus_epoch: 1000
     active_master_bus_epoch: 0
+
     use_track_loss : false
     use_mix_loss : true
     use_param_loss : false
-
-    # We generate random mixes using the naive random mix function
 
     mix_fn: mst.mixing.naive_random_mix
     mix_console:
@@ -28,8 +25,8 @@ model:
         eq_max_gain_db: 12.0
         min_pan: 0.0
         max_pan: 1.0
-    model: 
-      class_path: mst.modules.MixStyleTransferModel 
+    model:
+      class_path: mst.modules.MixStyleTransferModel
       init_args:
         # track_encoder: 
         #   class_path: mst.modules.SpectrogramEncoder
@@ -38,6 +35,7 @@ model:
         #     n_fft: 2048
         #     hop_length: 512
         #     input_batchnorm: false
+        #     freeze: false
         # track_encoder:
         #   class_path: mst.modules.SpatialCLAPEncoder
         #   init_args:
@@ -58,6 +56,7 @@ model:
         #     n_fft: 2048
         #     hop_length: 512
         #     input_batchnorm: false
+        #     freeze: false
         # mix_encoder:
         #   class_path: mst.modules.SpatialCLAPEncoder
         #   init_args:
@@ -80,18 +79,21 @@ model:
             num_master_bus_control_params: 26
             num_layers: 12
             nhead: 8
-            train_only_proj_layer: false
+            train_only_proj_layer: true
             freeze_proj_layer: true
-
+       
     loss: 
-      class_path: mst.loss.AudioFeatureLoss
+      class_path: auraloss.freq.SumAndDifferenceSTFTLoss
       init_args:
-        sample_rate: 44100
-        stem_separation: false
-        use_clap: false
-        weights: 
-          - 0.1 # rms
-          - 0.001 # crest factor
-          - 1.0  # stereo width
-          - 1.0 # stereo imbalance
-          - 0.1 # bark spectrum
+        fft_sizes: 
+        - 512
+        - 2048
+        - 8192
+        hop_sizes: 
+        - 256 
+        - 1024
+        - 4096
+        win_lengths:
+        - 512
+        - 2048
+        - 8192
