@@ -218,11 +218,6 @@ def load_diffmst(config_path: str, ckpt_path: str, map_location: str = "cpu"):
         config = yaml.safe_load(f)
 
     core_model_configs = config["model"]["init_args"]["model"]
-
-    module_path, class_name = core_model_configs["class_path"].rsplit(".", 1)
-    module = import_module(module_path)
-    model = getattr(module, class_name)(**core_model_configs["init_args"])
-
     submodule_configs = core_model_configs["init_args"]
 
     # create track encoder module
@@ -243,7 +238,7 @@ def load_diffmst(config_path: str, ckpt_path: str, map_location: str = "cpu"):
         **submodule_configs["mix_encoder"]["init_args"]
     )
 
-    # create mix encoder module
+    # create text encoder module
     module_path, class_name = submodule_configs["text_encoder"]["class_path"].rsplit(
         ".", 1
     )
@@ -259,6 +254,16 @@ def load_diffmst(config_path: str, ckpt_path: str, map_location: str = "cpu"):
     module = import_module(module_path)
     controller = getattr(module, class_name)(
         **submodule_configs["controller"]["init_args"]
+    )
+
+    # create main model
+    module_path, class_name = core_model_configs["class_path"].rsplit(".", 1)
+    module = import_module(module_path)
+    model = getattr(module, class_name)(
+        track_encoder=track_encoder,
+        mix_encoder=mix_encoder,
+        text_encoder=text_encoder,
+        controller=controller,
     )
 
     # create mix console module
