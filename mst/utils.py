@@ -160,6 +160,10 @@ def run_diffmst(
     # ------- generate a mix using the predicted mix console parameters -------
     # apply with sliding window of 262144 samples with overlap
     pred_mix = torch.zeros(1, 2, norm_tracks.shape[-1]).to(norm_tracks.device)
+    
+    # Initialize full_mixed_tracks
+    num_tracks = norm_tracks.shape[1]
+    full_mixed_tracks = torch.zeros(1, num_tracks, 2, norm_tracks.shape[-1]).to(norm_tracks.device)
 
     for i in tqdm(range(0, norm_tracks.shape[-1], analysis_len // 2)):
         norm_tracks_window = norm_tracks[..., i : i + analysis_len]
@@ -186,6 +190,10 @@ def run_diffmst(
             pred_mix_window = torch.nn.functional.pad(
                 pred_mix_window, (0, analysis_len - pred_mix_window.shape[-1])
             )
+            # Also pad pred_mixed_tracks
+            pred_mixed_tracks = torch.nn.functional.pad(
+                pred_mixed_tracks, (0, analysis_len - pred_mixed_tracks.shape[-1])
+            )
 
         window = torch.hann_window(pred_mix_window.shape[-1]).to(pred_mix_window.device)
         # apply hann window
@@ -194,19 +202,26 @@ def run_diffmst(
             window[: window.shape[-1] // 2] = 1.0
 
         pred_mix_window *= window
+        
+        # Apply window to mixed tracks as well
+        # window shape: (seq_len) -> (1, 1, 1, seq_len)
+        window_expanded = window.view(1, 1, 1, -1)
+        pred_mixed_tracks *= window_expanded
 
         # check length of the mix window
         output_len = pred_mix[..., i : i + analysis_len].shape[-1]
 
         # overlap add
         pred_mix[..., i : i + analysis_len] += pred_mix_window[..., :output_len]
+        full_mixed_tracks[..., i : i + analysis_len] += pred_mixed_tracks[..., :output_len]
 
     # crop the mix to the original length
     pred_mix = pred_mix[..., : norm_tracks.shape[-1]]
+    full_mixed_tracks = full_mixed_tracks[..., : norm_tracks.shape[-1]]
 
     return (
         pred_mix,
-        pred_mixed_tracks,
+        full_mixed_tracks,
         pred_track_param_dict,
         pred_fx_bus_param_dict,
         pred_master_bus_param_dict,
