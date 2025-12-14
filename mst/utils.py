@@ -218,6 +218,7 @@ def load_diffmst(config_path: str, ckpt_path: str, map_location: str = "cpu"):
         config = yaml.safe_load(f)
 
     core_model_configs = config["model"]["init_args"]["model"]
+    print(core_model_configs)
 
     module_path, class_name = core_model_configs["class_path"].rsplit(".", 1)
     module = import_module(module_path)
