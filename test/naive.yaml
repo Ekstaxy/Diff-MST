@@ -47,7 +47,7 @@ model:
           init_args:
             sample_rate: 44100
             freeze: true
-            ckpt_path: /kaggle/working/Diff-MST/music_audioset_epoch_15_esc_90.14.pt
+            ckpt_path: /kaggle/working/music_audioset_epoch_15_esc_90.14.pt
             htsat_base: true
         # mix_encoder: 
         #   class_path: mst.modules.SpectrogramEncoder
@@ -67,7 +67,7 @@ model:
           class_path: mst.modules.CLAPTextEncoder
           init_args:
             freeze: true
-            ckpt_path: /kaggle/working/Diff-MST/music_audioset_epoch_15_esc_90.14.pt
+            ckpt_path: /kaggle/working/music_audioset_epoch_15_esc_90.14.pt
             htsat_base: true
 
         mix_encoder:
@@ -75,7 +75,7 @@ model:
           init_args:
             sample_rate: 44100
             freeze: true
-            ckpt_path: /kaggle/working/Diff-MST/music_audioset_epoch_15_esc_90.14.pt
+            ckpt_path: /kaggle/working/music_audioset_epoch_15_esc_90.14.pt
             htsat_base: true
         
         controller:
