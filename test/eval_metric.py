@@ -42,7 +42,7 @@ def get_spectral_centroid(waveform, sr=44100):
         )
         centroids.append(np.mean(cent))
     
-    return np.array(centroids)
+    return np.mean(centroids)
 
 def get_band_ratio(waveform, sr=44100, split_freq=1000):
     """
@@ -50,7 +50,7 @@ def get_band_ratio(waveform, sr=44100, split_freq=1000):
     Args:
         waveform (np.ndarray): Audio waveform of dimension (Channels, time)
     Returns:
-        np.ndarray: Band ratio of dimension (Channels,)
+        float: Band ratio
     """
     if waveform.ndim == 1:
         waveform = waveform[np.newaxis, :]
@@ -75,7 +75,7 @@ def get_band_ratio(waveform, sr=44100, split_freq=1000):
         ratio = high_band_energy / (low_band_energy + 1e-8)
         ratios.append(ratio)
         
-    return np.array(ratios)
+    return np.mean(ratios)
 
 def get_crest_factor(waveform):
     """
@@ -83,7 +83,7 @@ def get_crest_factor(waveform):
     Args:
         waveform (np.ndarray): Audio waveform of dimension (Channels, time)
     Returns:
-        np.ndarray: Crest Factor of dimension (Channels,)
+        float: Crest Factor
     """
     if waveform.ndim == 1:
         waveform = waveform[np.newaxis, :]
@@ -98,7 +98,7 @@ def get_crest_factor(waveform):
     cf_linear = peak / (rms + 1e-8)
     cf_db = 20 * np.log10(cf_linear)
     
-    return cf_db
+    return np.mean(cf_db)
 
 def foward(waveform):
     # Example function to demonstrate usage of the above metrics
@@ -126,7 +126,8 @@ if __name__ == "__main__":
     for file_path in file_list:
         print(f"Processing: {file_path}")
         try:
-            waveform, sr = librosa.load(file_path, sr=44100, mono=False)
+            # Use mono=True to mix down to single channel
+            waveform, sr = librosa.load(file_path, sr=44100, mono=True)
             metrics = foward(waveform)
             
             # Add filename to metrics for identification
