@@ -1275,9 +1275,9 @@ class CLAPEncoder(nn.Module):
         else:
             self.model = laion_clap.CLAP_Module(enable_fusion=False)
         if ckpt_path is not None:
-            self.model.load_ckpt(ckpt_path)
+            self.model.load_ckpt(ckpt_path, verbose=False)
         else:
-            self.model.load_ckpt()
+            self.model.load_ckpt(verbose=False)
         
         if freeze:
             for param in self.parameters():
