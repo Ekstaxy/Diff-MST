@@ -93,6 +93,7 @@ def make_serializable(obj):
 
 def main():
     args = parse_args()
+    print(args.control_info)
 
     meter = pyln.Meter(44100)
     target_lufs_db = args.target_lufs
@@ -191,7 +192,7 @@ def main():
             ref_audio = ref_audio.view(1, 2, -1)
             print(f"[INFO] reference audio shape: {ref_audio.shape}")
 
-            for song_section in ["verse", "chorus"]:
+            for song_section in ["verse"]:
                 print(f"[INFO] Mixing {song_section}...")
                 if song_section == "verse":
                     track_start_idx = example["track_verse_start_idx"]
@@ -279,7 +280,7 @@ def main():
             prev_track_param_dict = pred_track_param_dict
             prev_master_bus_param_dict = pred_master_bus_param_dict
 
-            for song_section in ["verse", "chorus"]:
+            for song_section in ["verse"]:
                 print(f"[INFO] Mixing {song_section}...")
                 if song_section == "verse":
                     track_start_idx = example["track_verse_start_idx"]
