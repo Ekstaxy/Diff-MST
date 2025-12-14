@@ -351,7 +351,7 @@ def main():
                     print(pred_mixed_tracks.shape)
                     num_tracks = pred_mixed_tracks.shape[2]
                     for t_idx in range(num_tracks):
-                        stem_audio = pred_mixed_tracks[0, t_idx, :, :]
+                        stem_audio = pred_mixed_tracks[0, :, t_idx, :]
                         stem_filename = f"track_{t_idx}.wav"
                         torchaudio.save(stems_dir / stem_filename, stem_audio, 44100)
 
