@@ -163,7 +163,7 @@ def run_diffmst(
     
     # Initialize full_mixed_tracks
     num_tracks = norm_tracks.shape[1]
-    full_mixed_tracks = torch.zeros(1, num_tracks, 2, norm_tracks.shape[-1]).to(norm_tracks.device)
+    full_mixed_tracks = torch.zeros(1, 2, num_tracks, norm_tracks.shape[-1]).to(norm_tracks.device)
 
     for i in tqdm(range(0, norm_tracks.shape[-1], analysis_len // 2)):
         norm_tracks_window = norm_tracks[..., i : i + analysis_len]
@@ -202,12 +202,6 @@ def run_diffmst(
             window[: window.shape[-1] // 2] = 1.0
 
         pred_mix_window *= window
-        
-        # Check shape of pred_mixed_tracks and transpose if necessary
-        # We want (Batch, Tracks, Channels, Time)
-        # If it is (Batch, Channels, Tracks, Time), transpose it.
-        if pred_mixed_tracks.ndim == 4 and pred_mixed_tracks.shape[1] == 2 and pred_mixed_tracks.shape[2] != 2:
-             pred_mixed_tracks = pred_mixed_tracks.permute(0, 2, 1, 3)
 
         # Apply window to mixed tracks as well
         # window shape: (seq_len) -> (1, 1, 1, seq_len)
