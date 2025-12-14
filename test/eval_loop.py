@@ -150,7 +150,7 @@ def main():
     print(f"[INFO] Tracks shape: {tracks.shape}")
 
     if args.sum_only:
-        for song_section in ["verse", "chorus"]:
+        for song_section in ["verse"]:
             print(f"[INFO] Mixing {song_section} with sum baseline...")
             if song_section == "verse":
                 track_start_idx = args.track_verse_idx
@@ -169,7 +169,7 @@ def main():
 
             mix_filepath = output_dir / f"sum-baseline-{song_section}-lufs-{int(target_lufs_db)}.wav"
             torchaudio.save(mix_filepath, sum_mix.view(2, -1), 44100)
-        return
+        # return
         
     # Control type and info checks
     assert len(args.control_type) == len(args.control_info), \
