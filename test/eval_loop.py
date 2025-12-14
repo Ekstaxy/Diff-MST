@@ -27,7 +27,7 @@ def parse_args():
     parser.add_argument("--control_type", type=str, nargs='+', default=["audio"],
                         help="Control types to use for mixing (audio or text)")    
     parser.add_argument("--control_info", type=str, nargs='+', 
-                        default=["/kaggle/input/medley-db-v2/V2/TleilaxEnsemble_Late/TleilaxEnsemble_Late_MIX.wav", (-1, 1, "The sound is dark"), (2, 1, "The sound is dark")],
+                        default=["/kaggle/input/medley-db-v2/V2/TleilaxEnsemble_Late/TleilaxEnsemble_Late_MIX.wav", (-1, 1, "The sound is dark"), (2, 1, "The sound is bright")],
                         help="Control information (file paths for audio, text prompts for text in format: (track, weight, 'text'). If track is -1, use master bus.)")
     
     # Verse/Chorus indices
@@ -339,6 +339,18 @@ def main():
 
                     mix_filepath = output_dir / f"step{c_idx}-{method_name}-ref={song_section}.wav"
                     torchaudio.save(mix_filepath, pred_mix.view(chs, -1), 44100)
+
+                    # Save individual processed stems
+                    stems_dir = output_dir / f"step{c_idx}-{method_name}-ref={song_section}-stems"
+                    stems_dir.mkdir(exist_ok=True)
+                    
+                    # pred_mixed_tracks shape: (bs, num_tracks, 2, seq_len)
+                    # Assuming batch size is 1
+                    num_tracks = pred_mixed_tracks.shape[1]
+                    for t_idx in range(num_tracks):
+                        stem_audio = pred_mixed_tracks[0, t_idx, :, :]
+                        stem_filename = f"track_{t_idx}.wav"
+                        torchaudio.save(stems_dir / stem_filename, stem_audio, 44100)
 
                     json_data = {
                         "step": c_idx,
