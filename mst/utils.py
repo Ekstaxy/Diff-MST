@@ -203,6 +203,12 @@ def run_diffmst(
 
         pred_mix_window *= window
         
+        # Check shape of pred_mixed_tracks and transpose if necessary
+        # We want (Batch, Tracks, Channels, Time)
+        # If it is (Batch, Channels, Tracks, Time), transpose it.
+        if pred_mixed_tracks.ndim == 4 and pred_mixed_tracks.shape[1] == 2 and pred_mixed_tracks.shape[2] != 2:
+             pred_mixed_tracks = pred_mixed_tracks.permute(0, 2, 1, 3)
+
         # Apply window to mixed tracks as well
         # window shape: (seq_len) -> (1, 1, 1, seq_len)
         window_expanded = window.view(1, 1, 1, -1)
