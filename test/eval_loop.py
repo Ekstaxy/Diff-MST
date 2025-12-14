@@ -26,10 +26,12 @@ def parse_args():
     # Looping parameters
     parser.add_argument("--control_type", type=str, nargs='+', default=["audio"],
                         help="Control types to use for mixing (audio or text)")    
+    # parser.add_argument("--control_info", type=str, nargs='+', 
+    #                     default=["/kaggle/input/medley-db-v2/V2/TleilaxEnsemble_Late/TleilaxEnsemble_Late_MIX.wav", (-1, 1, "The sound is dark"), (2, 1, "The sound is bright")],
+    #                     help="Control information (file paths for audio, text prompts for text in format: (track, weight, 'text'). If track is -1, use master bus.)")
     parser.add_argument("--control_info", type=str, nargs='+', 
-                        default=["/kaggle/input/medley-db-v2/V2/TleilaxEnsemble_Late/TleilaxEnsemble_Late_MIX.wav", (-1, 1, "The sound is dark"), (2, 1, "The sound is bright")],
-                        help="Control information (file paths for audio, text prompts for text in format: (track, weight, 'text'). If track is -1, use master bus.)")
-    
+                    default=["/kaggle/input/medley-db-v2/V2/TleilaxEnsemble_Late/TleilaxEnsemble_Late_MIX.wav", (2, 1, "The sound is bright")],
+                    help="Control information (file paths for audio, text prompts for text in format: (track, weight, 'text'). If track is -1, use master bus.)")
     # Verse/Chorus indices
     parser.add_argument('--track-verse-idx', type=int, required=True,
                         help='Track verse start index (samples)')
@@ -345,9 +347,9 @@ def main():
                     stems_dir = output_dir / f"step{c_idx}-{method_name}-ref={song_section}-stems"
                     stems_dir.mkdir(exist_ok=True)
                     
-                    # pred_mixed_tracks shape: (bs, num_tracks, 2, seq_len)
                     # Assuming batch size is 1
-                    num_tracks = pred_mixed_tracks.shape[1]
+                    print(pred_mixed_tracks.shape)
+                    num_tracks = pred_mixed_tracks.shape[2]
                     for t_idx in range(num_tracks):
                         stem_audio = pred_mixed_tracks[0, t_idx, :, :]
                         stem_filename = f"track_{t_idx}.wav"
