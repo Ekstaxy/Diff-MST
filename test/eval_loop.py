@@ -14,6 +14,7 @@ def parse_args():
                         help='Path to naive.yaml')
     parser.add_argument("--checkpoint", type=str, required=True,
                         help='Path to model checkpoint')
+
     
     # Audio parameters
     parser.add_argument("--tracks_path", type=str, 
@@ -24,8 +25,8 @@ def parse_args():
     parser.add_argument("--control_type", type=str, nargs='+', default=["audio"],
                         help="Control types to use for mixing (audio or text)")    
     parser.add_argument("--control_info", type=str, nargs='+', 
-                        default=["/mnt/gestalt/home/rakec/data/diff-mst/MedleyDB_V2/V2/TleilaxEnsemble_Late/TleilaxEnsemble_Late_MIX.wav", (1, "text")],
-                        help="Control information (file paths for audio, text prompts for text)")
+                        default=["/kaggle/input/medley-db-v2/V2/TleilaxEnsemble_Late/TleilaxEnsemble_Late_MIX.wav", (-1, 1, "The sound is dark"), (2, 1, "The sound is dark")],
+                        help="Control information (file paths for audio, text prompts for text in format: (track, weight, 'text'). If track is -1, use master bus.)")
     
     # Verse/Chorus indices
     parser.add_argument('--track-verse-idx', type=int, required=True,
@@ -44,6 +45,9 @@ def parse_args():
                         help='Experiment name for output folder')
     parser.add_argument('--target_lufs', type=float, default=-22.0,
                         help='Target output LUFS')
+
+    parser.add_argument('--sum_only', type=bool, default=False,
+                        help='Whether to only run the sum baseline')
 
     return parser.parse_args()
 
@@ -127,6 +131,29 @@ def main():
 
     print(f"[INFO] Tracks shape: {tracks.shape}")
 
+    if args.sum_only:
+        for song_section in ["verse", "chorus"]:
+            print(f"[INFO] Mixing {song_section} with sum baseline...")
+            if song_section == "verse":
+                track_start_idx = args.track_verse_idx
+            else:
+                track_start_idx = args.track_chorus_idx
+
+            mix_tracks = tracks[..., track_start_idx : track_start_idx + (44100 * 10)]
+
+            sum_mix, _, _, _ = equal_loudness_mix(mix_tracks)
+
+            mix_lufs_db = meter.integrated_loudness(
+                sum_mix.squeeze(0).permute(1, 0).numpy()
+            )
+            lufs_delta_db = target_lufs_db - mix_lufs_db
+            sum_mix = sum_mix * 10 ** (lufs_delta_db / 20)
+
+            mix_filepath = output_dir / f"sum-baseline-{song_section}-lufs-{int(target_lufs_db)}.wav"
+            torchaudio.save(mix_filepath, sum_mix.view(2, -1), 44100)
+        return
+        
+
     assert len(args.control_type) == len(args.control_info), \
         "Number of control types must match number of control info entries."
     for c_idx, c_type in enumerate(args.control_type):
@@ -161,17 +188,140 @@ def main():
                 if ref_start_idx + 44100 * 10 > ref_audio.shape[-1]:
                     print(f"[Warning] Reference too short for this section.")
 
-                ref_analysis = ref_audio[..., ref_start_idx : ref_start_idx + 44100 * 10]
-                ref_loudness_target = -14.0
-                ref_filepath = output_dir / f"ref_{song_section}_lufs{ref_loudness_target}.wav"
+                mix_tracks = tracks
+                mix_tracks = tracks[..., track_start_idx : track_start_idx + (44100 * 10 * 2)]
+                track_start_idx = 0
 
-                ref_lufs_db = meter.integrated_loudness(
-                    ref_analysis.squeeze().permute(1, 0).numpy()
-                )
-                lufs_delta_db = ref_loudness_target - ref_lufs_db
-                ref_analysis = ref_analysis * 10 ** (lufs_delta_db / 20)
 
-                torchaudio.save(ref_filepath, ref_analysis.squeeze(), 44100)
+                method_name = "diffmst"
+                method = methods[method_name]
+                print(f"[INFO] Applying method: {method_name}")
+
+
+                model, mix_console = method["model"]
+                model = model.to("cpu") if model is not None else None
+                mix_console = mix_console.to("cpu") if mix_console is not None else None
+                func = method["func"]
+
+                with torch.no_grad():
+                    result = func(
+                        mix_tracks.clone(),
+                        ref_audio.clone(),
+                        model,
+                        mix_console,
+                        track_start_idx=track_start_idx,
+                        ref_start_idx=ref_start_idx,
+                    )
+
+                    (
+                        pred_mix,
+                        pred_mixed_tracks,
+                        pred_track_param_dict,
+                        pred_fx_bus_param_dict,
+                        pred_master_bus_param_dict,
+                    ) = result
+
+                    bs, chs, seq_len = pred_mix.shape
+
+                    mix_lufs_db = meter.integrated_loudness(
+                        pred_mix.squeeze(0).permute(1, 0).numpy()
+                    )
+                    lufs_delta_db = target_lufs_db - mix_lufs_db
+                    pred_mix = pred_mix * 10 ** (lufs_delta_db / 20)
+
+                    mix_filepath = output_dir / f"step{c_idx}-{method_name}-ref={song_section}.wav"
+                    torchaudio.save(mix_filepath, pred_mix.view(chs, -1), 44100)
+                    
+        elif c_type == "text":
+            text = args.control_info[c_idx]
+            print(f"[INFO] Using text prompt: {text[2]}, weight: {text[1]}, track: {text[0]}")
+            
+            example = {
+                "tracks": args.tracks_path,
+                "track_verse_start_idx": args.track_verse_idx,
+                "track_chorus_start_idx": args.track_chorus_idx,
+                "ref": args.control_info[c_idx],
+                "ref_verse_start_idx": args.ref_verse_idx,
+                "ref_chorus_start_idx": args.ref_chorus_idx
+            }
+
+            num_tracks = pred_mixed_tracks.shape[2]     # pred_mixed_tracks: (bs, 2, num_tracks, seq_len)
+            if example["ref"][0] < -1 or example["ref"][0] >= num_tracks:
+                raise ValueError(f"Invalid track index {example['ref'][0]} for {num_tracks} tracks.")
+
+            if example["ref"][0] == -1:
+                ref_audio = pred_mix
+            else:
+                ref_audio = pred_mixed_tracks
+                ref_audio = ref_audio.view(1, 2*num_tracks, -1)
+
+            print(f"[INFO] reference audio shape: {ref_audio.shape}")
+            
+            prev_fx_bus_param_dict = pred_fx_bus_param_dict
+            prev_track_param_dict = pred_track_param_dict
+            prev_master_bus_param_dict = pred_master_bus_param_dict
+
+            for song_section in ["verse", "chorus"]:
+                print(f"[INFO] Mixing {song_section}...")
+                if song_section == "verse":
+                    track_start_idx = example["track_verse_start_idx"]
+                    ref_start_idx = example["ref_verse_start_idx"]
+                else:
+                    track_start_idx = example["track_chorus_start_idx"]
+                    ref_start_idx = example["ref_chorus_start_idx"]
+
+                if track_start_idx + 44100 * 10 > tracks.shape[-1]:
+                    print(f"[Warning] Tracks too short for this section.")
+                if ref_start_idx + 44100 * 10 > ref_audio.shape[-1]:
+                    print(f"[Warning] Reference too short for this section.")
+
+
+                method_name = "diffmst"
+                method = methods[method_name]
+                print(f"[INFO] Applying method: {method_name}")
+
+
+                model, mix_console = method["model"]
+                model = model.to("cpu") if model is not None else None
+                mix_console = mix_console.to("cpu") if mix_console is not None else None
+                func = method["func"]
+                
+
+                with torch.no_grad():
+                    result = func(
+                        mix_tracks.clone(),
+                        ref_audio.clone(),
+                        model,
+                        mix_console,
+                        text=example["ref"],
+                        track_start_idx=track_start_idx,
+                        ref_start_idx=ref_start_idx,
+                        prev_fx_bus_param_dict=prev_fx_bus_param_dict,
+                        prev_master_bus_param_dict=prev_master_bus_param_dict,
+                        prev_track_param_dict=prev_track_param_dict,
+                    )
+
+                    (
+                        pred_mix,
+                        pred_mixed_tracks,
+                        pred_track_param_dict,
+                        pred_fx_bus_param_dict,
+                        pred_master_bus_param_dict,
+                    ) = result
+                    
+                    
+                    
+                    bs, chs, seq_len = pred_mix.shape
+
+                    mix_lufs_db = meter.integrated_loudness(
+                        pred_mix.squeeze(0).permute(1, 0).numpy()
+                    )
+                    lufs_delta_db = target_lufs_db - mix_lufs_db
+                    pred_mix = pred_mix * 10 ** (lufs_delta_db / 20)
+
+                    mix_filepath = output_dir / f"step{c_idx}-{method_name}-ref={song_section}.wav"
+                    torchaudio.save(mix_filepath, pred_mix.view(chs, -1), 44100)
+
 
 if __name__ == "__main__":
     main()

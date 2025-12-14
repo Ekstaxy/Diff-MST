@@ -1,0 +1,250 @@
+The vocal in this song is crisp and distinct.
+Ensure the vocal sits prominently in the mix.
+Use EQ to remove muddiness from the vocal.
+The vocal clarity enhances the emotional impact of the song.
+Apply a high-pass filter to eliminate low-end rumble.
+The vocal is well-balanced with the instrumental.
+Add subtle reverb to give the vocal depth without overpowering it.
+The vocal tone is warm and inviting.
+Use compression to maintain consistent vocal dynamics.
+The vocal cuts through the mix effortlessly.
+De-ess the vocal to reduce harsh sibilance.
+The vocal is the focal point of the track.
+Layer harmonies to enrich the vocal texture.
+The vocal is free from distortion or clipping.
+Automate volume levels to keep the vocal steady.
+The vocal is bright and airy, adding life to the mix.
+Use a noise gate to remove background noise from the vocal.
+The vocal is perfectly in tune with the melody.
+Pan supporting vocals to create a wider stereo image.
+The vocal conveys the emotion of the lyrics beautifully.
+Use a pop filter to minimize plosive sounds during recording.
+The vocal is upfront and engaging.
+Add a touch of delay to enhance the vocal presence.
+The vocal blends seamlessly with the instrumental.
+Use parallel compression to add punch to the vocal.
+The vocal is smooth and polished.
+Apply pitch correction subtly to maintain a natural sound.
+The vocal is free from unwanted resonances.
+Use a dynamic EQ to tame problematic frequencies in the vocal.
+The vocal is expressive and dynamic.
+Add saturation to give the vocal a warm, analog feel.
+The vocal is clear and intelligible even in a dense mix.
+Use sidechain compression to make space for the vocal.
+The vocal is well-articulated and easy to understand.
+Apply stereo widening effects to enhance the vocal's presence.
+The vocal is the centerpiece of the arrangement.
+Use multiband compression to control specific frequency ranges in the vocal.
+The vocal is rich and full-bodied.
+Add subtle harmonics to enhance the vocal's character.
+The vocal is free from phase issues.
+Use a reference track to compare vocal clarity.
+The vocal is perfectly aligned with the rhythm of the song.
+Apply a de-esser to tame harsh "s" sounds.
+The vocal is natural and unprocessed.
+Use automation to emphasize key phrases in the vocal.
+The vocal is free from excessive reverb or delay.
+Add a touch of chorus to thicken the vocal.
+The vocal is well-supported by the instrumental arrangement.
+Use a limiter to prevent the vocal from peaking.
+The vocal is intimate and draws the listener in.
+Apply subtractive EQ to remove unwanted frequencies from the vocal.
+The vocal is vibrant and energetic.
+Use a high shelf to add brightness to the vocal.
+The vocal is perfectly balanced in the mix.
+Add a touch of doubling to enhance the vocal's width.
+The vocal is free from pops and clicks.
+Use a transient shaper to add attack to the vocal.
+The vocal is emotionally compelling.
+Apply reverb sparingly to maintain vocal clarity.
+The vocal is well-defined and articulate.
+Use a spectral analyzer to identify problem areas in the vocal.
+The vocal is free from masking by other instruments.
+Add a touch of shimmer to the vocal with an exciter.
+The vocal is perfectly synced with the instrumental.
+Use a low shelf to reduce boominess in the vocal.
+The vocal is clean and professional-sounding.
+Apply a notch filter to remove resonant frequencies in the vocal.
+The vocal is dynamic and engaging.
+Use a pitch shifter to create subtle vocal harmonies.
+The vocal is free from excessive compression artifacts.
+Add a touch of air to the vocal with a high-frequency boost.
+The vocal is perfectly balanced with the backing vocals.
+Use a multiband de-esser for more precise sibilance control.
+The vocal is warm and natural.
+Apply a tape emulator to add analog warmth to the vocal.
+The vocal is free from phase cancellation issues.
+Use a transient designer to shape the vocal's attack and sustain.
+The vocal is expressive and full of character.
+Add a touch of slapback delay for a vintage vocal sound.
+The vocal is perfectly in tune with the instrumental.
+Use a spectral gate to clean up the vocal recording.
+The vocal is free from excessive plosives.
+Apply a high-pass filter to remove low-end rumble from the vocal.
+The vocal is bright and clear without being harsh.
+Use a dynamic EQ to control harsh frequencies in the vocal.
+The vocal is perfectly balanced with the instrumental.
+Add a touch of reverb to give the vocal depth and space.
+The vocal is free from distortion or clipping.
+Use a noise gate to remove background noise from the vocal.
+The vocal is perfectly in tune with the melody.
+Pan supporting vocals to create a wider stereo image.
+The vocal conveys the emotion of the lyrics beautifully.
+Use a pop filter to minimize plosive sounds during recording.
+The vocal is upfront and engaging.
+Add a touch of delay to enhance the vocal presence.
+The vocal blends seamlessly with the instrumental.
+Use parallel compression to add punch to the vocal.
+The vocal is smooth and polished.
+Apply pitch correction subtly to maintain a natural sound.
+The vocal is free from unwanted resonances.
+Use a dynamic EQ to tame problematic frequencies in the vocal.
+The vocal is expressive and dynamic.
+Add saturation to give the vocal a warm, analog feel.
+The vocal is clear and intelligible even in a dense mix.
+Use sidechain compression to make space for the vocal.
+The vocal is well-articulated and easy to understand.
+Apply stereo widening effects to enhance the vocal's presence.
+The vocal is the centerpiece of the arrangement.
+Use multiband compression to control specific frequency ranges in the vocal.
+The vocal is rich and full-bodied.
+Add subtle harmonics to enhance the vocal's character.
+The vocal is free from phase issues.
+Use a reference track to compare vocal clarity.
+The vocal is perfectly aligned with the rhythm of the song.
+Apply a de-esser to tame harsh "s" sounds.
+The vocal is natural and unprocessed.
+Use automation to emphasize key phrases in the vocal.
+The vocal is free from excessive reverb or delay.
+Add a touch of chorus to thicken the vocal.
+The vocal is well-supported by the instrumental arrangement.
+Use a limiter to prevent the vocal from peaking.
+The vocal is intimate and draws the listener in.
+Apply subtractive EQ to remove unwanted frequencies from the vocal.
+The vocal is vibrant and energetic.
+Use a high shelf to add brightness to the vocal.
+The vocal is perfectly balanced in the mix.
+Add a touch of doubling to enhance the vocal's width.
+The vocal is free from pops and clicks.
+Use a transient shaper to add attack to the vocal.
+The vocal is emotionally compelling.
+Apply reverb sparingly to maintain vocal clarity.
+The vocal is well-defined and articulate.
+Use a spectral analyzer to identify problem areas in the vocal.
+The vocal is free from masking by other instruments.
+Add a touch of shimmer to the vocal with an exciter.
+The vocal is perfectly synced with the instrumental.
+Use a low shelf to reduce boominess in the vocal.
+The vocal is clean and professional-sounding.
+Apply a notch filter to remove resonant frequencies in the vocal.
+The vocal is dynamic and engaging.
+Use a pitch shifter to create subtle vocal harmonies.
+The vocal is free from excessive compression artifacts.
+Add a touch of air to the vocal with a high-frequency boost.
+The vocal is perfectly balanced with the backing vocals.
+Use a multiband de-esser for more precise sibilance control.
+The vocal is warm and natural.
+Apply a tape emulator to add analog warmth to the vocal.
+The vocal is free from phase cancellation issues.
+Use a transient designer to shape the vocal's attack and sustain.
+The vocal is expressive and full of character.
+Add a touch of slapback delay for a vintage vocal sound.
+The vocal is perfectly in tune with the instrumental.
+Use a spectral gate to clean up the vocal recording.
+The vocal is free from excessive plosives.
+Apply a high-pass filter to remove low-end rumble from the vocal.
+The vocal is bright and clear without being harsh.
+Use a dynamic EQ to control harsh frequencies in the vocal.
+The vocal is perfectly balanced with the instrumental.
+Add a touch of reverb to give the vocal depth and space.
+The vocal is free from distortion or clipping.
+Use a noise gate to remove background noise from the vocal.
+The vocal is perfectly in tune with the melody.
+Pan supporting vocals to create a wider stereo image.
+The vocal conveys the emotion of the lyrics beautifully.
+Use a pop filter to minimize plosive sounds during recording.
+The vocal is upfront and engaging.
+Add a touch of delay to enhance the vocal presence.
+The vocal blends seamlessly with the instrumental.
+Use parallel compression to add punch to the vocal.
+The vocal is smooth and polished.
+Apply pitch correction subtly to maintain a natural sound.
+The vocal is free from unwanted resonances.
+Use a dynamic EQ to tame problematic frequencies in the vocal.
+The vocal is expressive and dynamic.
+Add saturation to give the vocal a warm, analog feel.
+The vocal is clear and intelligible even in a dense mix.
+Use sidechain compression to make space for the vocal.
+The vocal is well-articulated and easy to understand.
+Apply stereo widening effects to enhance the vocal's presence.
+The vocal is the centerpiece of the arrangement.
+Use multiband compression to control specific frequency ranges in the vocal.
+The vocal is rich and full-bodied.
+Add subtle harmonics to enhance the vocal's character.
+The vocal is free from phase issues.
+Use a reference track to compare vocal clarity.
+The vocal is perfectly aligned with the rhythm of the song.
+Apply a de-esser to tame harsh "s" sounds.
+The vocal is natural and unprocessed.
+Use automation to emphasize key phrases in the vocal.
+The vocal is free from excessive reverb or delay.
+Add a touch of chorus to thicken the vocal.
+The vocal is well-supported by the instrumental arrangement.
+Use a limiter to prevent the vocal from peaking.
+The vocal is intimate and draws the listener in.
+Apply subtractive EQ to remove unwanted frequencies from the vocal.
+The vocal is vibrant and energetic.
+Use a high shelf to add brightness to the vocal.
+The vocal is perfectly balanced in the mix.
+Add a touch of doubling to enhance the vocal's width.
+The vocal is free from pops and clicks.
+Use a transient shaper to add attack to the vocal.
+The vocal is emotionally compelling.
+Apply reverb sparingly to maintain vocal clarity.
+The vocal is well-defined and articulate.
+Use a spectral analyzer to identify problem areas in the vocal.
+The vocal is free from masking by other instruments.
+Add a touch of shimmer to the vocal with an exciter.
+The vocal is perfectly synced with the instrumental.
+Use a low shelf to reduce boominess in the vocal.
+The vocal is clean and professional-sounding.
+Apply a notch filter to remove resonant frequencies in the vocal.
+The vocal is dynamic and engaging.
+Use a pitch shifter to create subtle vocal harmonies.
+The vocal is free from excessive compression artifacts.
+Add a touch of air to the vocal with a high-frequency boost.
+The vocal is perfectly balanced with the backing vocals.
+Use a multiband de-esser for more precise sibilance control.
+The vocal is warm and natural.
+Apply a tape emulator to add analog warmth to the vocal.
+The vocal is free from phase cancellation issues.
+Use a transient designer to shape the vocal's attack and sustain.
+The vocal is expressive and full of character.
+Add a touch of slapback delay for a vintage vocal sound.
+The vocal is perfectly in tune with the instrumental.
+Use a spectral gate to clean up the vocal recording.
+The vocal is free from excessive plosives.
+Apply a high-pass filter to remove low-end rumble from the vocal.
+The vocal is bright and clear without being harsh.
+Use a dynamic EQ to control harsh frequencies in the vocal.
+The vocal is perfectly balanced with the instrumental.
+Add a touch of reverb to give the vocal depth and space.
+The vocal is free from distortion or clipping.
+Use a noise gate to remove background noise from the vocal.
+The vocal is perfectly in tune with the melody.
+Pan supporting vocals to create a wider stereo image.
+The vocal conveys the emotion of the lyrics beautifully.
+Use a pop filter to minimize plosive sounds during recording.
+The vocal is upfront and engaging.
+Add a touch of delay to enhance the vocal presence.
+The vocal blends seamlessly with the instrumental.
+Use parallel compression to add punch to the vocal.
+The vocal is smooth and polished.
+Apply pitch correction subtly to maintain a natural sound.
+The vocal is free from unwanted resonances.
+Use a dynamic EQ to tame problematic frequencies in the vocal.
+The vocal is expressive and dynamic.
+Add saturation to give the vocal a warm, analog feel.
+The vocal is clear and intelligible even in a dense mix.
+Use sidechain compression to make space for the vocal.
+The vocal is well-articulated and easy to understand.

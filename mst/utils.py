@@ -53,8 +53,12 @@ def run_diffmst(
     ref: torch.Tensor,
     model: torch.nn.Module,
     mix_console: torch.nn.Module,
+    text: Optional[tuple] = None,
     track_start_idx: int = 0,
     ref_start_idx: int = 0,
+    prev_fx_bus_param_dict: Optional[dict] = None,
+    prev_master_bus_param_dict: Optional[dict] = None,
+    prev_track_param_dict: Optional[dict] = None,
 ):
     """Run the differentiable mix style transfer model.
 
@@ -63,15 +67,18 @@ def run_diffmst(
         ref (Tensor): Reference mix with shape (bs, 2, seq_len).
         model (torch.nn.Module): MixStyleTransferModel instance.
         mix_console (torch.nn.Module): MixConsole instance.
+        text (tuple, optional): Tuple of text strings with settings. (track_idx, weight, text). Default: None.
         track_start_idx (int, optional): Start index of the track to use. Default: 0.
         ref_start_idx (int, optional): Start index of the reference mix to use. Default: 0.
 
     Returns:
         pred_mix (Tensor): Predicted mix with shape (bs, 2, seq_len).
+        pred_mixed_tracks (Tensor): Predicted mixed tracks with shape (bs, num_tracks, 2, seq_len).
         pred_track_param_dict (dict): Dictionary with predicted track parameters.
         pred_fx_bus_param_dict (dict): Dictionary with predicted fx bus parameters.
         pred_master_bus_param_dict (dict): Dictionary with predicted master bus parameters.
     """
+
     # ------ defaults ------
     use_track_input_fader = True
     use_track_panner = True
@@ -132,8 +139,23 @@ def run_diffmst(
 
     #  ---- run model to estimate mix parmaeters using analysis audio ----
     pred_track_params, pred_fx_bus_params, pred_master_bus_params = model(
-        norm_analysis_tracks, analysis_ref
+        norm_analysis_tracks, analysis_ref, text=text
     )
+    
+    # Master bus control with text
+    if text is not None and text[0] == -1:
+        if prev_track_param_dict is None:
+            assert False, "Previous track parameters must be provided when controlling master bus with text."
+        pred_track_params = prev_track_param_dict
+        if prev_fx_bus_param_dict is None:
+            assert False, "Previous fx bus parameters must be provided when controlling master bus with text."
+        pred_fx_bus_params = prev_fx_bus_param_dict
+        
+    # Track control with text
+    elif text is not None and text[0] >= 0:
+        if prev_master_bus_param_dict is None:
+            assert False, "Previous master bus parameters must be provided when controlling track with text."
+        pred_master_bus_params = prev_master_bus_param_dict
 
     # ------- generate a mix using the predicted mix console parameters -------
     # apply with sliding window of 262144 samples with overlap
@@ -184,6 +206,7 @@ def run_diffmst(
 
     return (
         pred_mix,
+        pred_mixed_tracks,
         pred_track_param_dict,
         pred_fx_bus_param_dict,
         pred_master_bus_param_dict,
@@ -220,6 +243,15 @@ def load_diffmst(config_path: str, ckpt_path: str, map_location: str = "cpu"):
         **submodule_configs["mix_encoder"]["init_args"]
     )
 
+    # create mix encoder module
+    module_path, class_name = submodule_configs["text_encoder"]["class_path"].rsplit(
+        ".", 1
+    )
+    module = import_module(module_path)
+    text_encoder = getattr(module, class_name)(
+        **submodule_configs["text_encoder"]["init_args"]
+    )
+
     # create controller module
     module_path, class_name = submodule_configs["controller"]["class_path"].rsplit(
         ".", 1
@@ -252,6 +284,7 @@ def load_diffmst(config_path: str, ckpt_path: str, map_location: str = "cpu"):
         if k.startswith("model.mix_encoder"):
             state_dict[k.replace("model.mix_encoder.", "", 1)] = v
     mix_encoder.load_state_dict(state_dict)
+    text_encoder.load_state_dict(state_dict)
 
     state_dict = {}
     for k, v in checkpoint["state_dict"].items():
@@ -268,6 +301,7 @@ def load_diffmst(config_path: str, ckpt_path: str, map_location: str = "cpu"):
     model = MixStyleTransferModel(
         track_encoder,
         mix_encoder,
+        text_encoder,
         controller,
     )
     model.eval()
