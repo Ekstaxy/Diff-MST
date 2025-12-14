@@ -1,4 +1,6 @@
 import torch
+import numpy as np
+import json
 import pathlib
 import argparse
 import torchaudio
@@ -75,6 +77,19 @@ def equal_loudness_mix(tracks: torch.Tensor, *args, **kwargs):
     sum_mix /= sum_mix.abs().max()
 
     return sum_mix, None, None, None
+
+def make_serializable(obj):
+    if isinstance(obj, dict):
+        return {k: make_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, (torch.Tensor, np.ndarray)):
+        if obj.numel() == 1:
+            return obj.item()
+        else:
+            return obj.tolist()
+    elif isinstance(obj, (float, int, str)):
+        return obj
+    else:
+        return str(obj)
 
 def main():
     args = parse_args()
@@ -153,11 +168,13 @@ def main():
             torchaudio.save(mix_filepath, sum_mix.view(2, -1), 44100)
         return
         
-
+    # Control type and info checks
     assert len(args.control_type) == len(args.control_info), \
         "Number of control types must match number of control info entries."
     for c_idx, c_type in enumerate(args.control_type):
         assert c_type in ["audio", "text"], f"Unsupported control type: {c_type}"
+
+        # Audio Control
         if c_type == "audio":
             example = {
                 "tracks": args.tracks_path,
@@ -232,6 +249,7 @@ def main():
                     mix_filepath = output_dir / f"step{c_idx}-{method_name}-ref={song_section}.wav"
                     torchaudio.save(mix_filepath, pred_mix.view(chs, -1), 44100)
                     
+        # Text Control
         elif c_type == "text":
             text = args.control_info[c_idx]
             print(f"[INFO] Using text prompt: {text[2]}, weight: {text[1]}, track: {text[0]}")
@@ -321,6 +339,28 @@ def main():
 
                     mix_filepath = output_dir / f"step{c_idx}-{method_name}-ref={song_section}.wav"
                     torchaudio.save(mix_filepath, pred_mix.view(chs, -1), 44100)
+
+                    json_data = {
+                        "step": c_idx,
+                        "type": "text",
+                        "prompt": text[2],
+                        "weight": text[1],
+                        "target_track": text[0],
+                        "section": song_section,
+                        "prev_param": {
+                            "tracks": make_serializable(prev_track_param_dict),
+                            "fx_bus": make_serializable(prev_fx_bus_param_dict),
+                            "master_bus": make_serializable(prev_master_bus_param_dict)
+                        },
+                        "pred_param": {
+                            "tracks": make_serializable(pred_track_param_dict),
+                            "fx_bus": make_serializable(pred_fx_bus_param_dict),
+                            "master_bus": make_serializable(pred_master_bus_param_dict)
+                        }
+                    }
+                    json_path = output_dir / f"step{c_idx}-{method_name}-ref={song_section}.json"
+                    with open(json_path, 'w') as f:
+                        json.dump(json_data, f, indent=4)
 
 
 if __name__ == "__main__":
