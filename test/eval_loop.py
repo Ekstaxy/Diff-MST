@@ -251,6 +251,18 @@ def main():
 
                     mix_filepath = output_dir / f"step{c_idx}-{method_name}-ref={song_section}.wav"
                     torchaudio.save(mix_filepath, pred_mix.view(chs, -1), 44100)
+
+                    # Save individual processed stems
+                    stems_dir = output_dir / f"step{c_idx}-{method_name}-ref={song_section}-stems"
+                    stems_dir.mkdir(exist_ok=True)
+                    
+                    # Assuming batch size is 1
+                    print(pred_mixed_tracks.shape)
+                    num_tracks = pred_mixed_tracks.shape[2]
+                    for t_idx in range(num_tracks):
+                        stem_audio = pred_mixed_tracks[0, :, t_idx, :]
+                        stem_filename = f"track_{t_idx}.wav"
+                        torchaudio.save(stems_dir / stem_filename, stem_audio, 44100)
                     
         # Text Control
         elif c_type == "text":
@@ -348,7 +360,6 @@ def main():
                     stems_dir.mkdir(exist_ok=True)
                     
                     # Assuming batch size is 1
-                    print(pred_mixed_tracks.shape)
                     num_tracks = pred_mixed_tracks.shape[2]
                     for t_idx in range(num_tracks):
                         stem_audio = pred_mixed_tracks[0, :, t_idx, :]
