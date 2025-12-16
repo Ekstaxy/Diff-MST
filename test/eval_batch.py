@@ -285,6 +285,22 @@ def main():
         except Exception as e:
             print(f"Warning: Could not normalize text mix: {e}")
 
+        # --- Save Audio ---
+        song_out_dir = output_dir / song_name
+        song_out_dir.mkdir(exist_ok=True)
+        
+        # Save Mixes
+        torchaudio.save(song_out_dir / "mix_baseline.wav", pred_mix_base.squeeze(0), 44100)
+        torchaudio.save(song_out_dir / "mix_text.wav", pred_mix_text.squeeze(0), 44100)
+        
+        # Save Stems (Target and Sum of Others)
+        # Baseline
+        # pred_tracks_base shape: (bs, 2, num_tracks, seq_len)
+        target_stem_base = pred_tracks_base[0, :, target_idx, :] # (2, len)
+        other_stems_base = pred_tracks_base[0].clone()
+        other_stems_base[:, target_idx, :] = 0
+        sum_others_base = other_stems_base.sum(dim=1) # (2, len)
+
         try:
             mix_lufs_db = meter.integrated_loudness(target_stem_base.squeeze(0).permute(1, 0).cpu().numpy())
             lufs_delta_db = args.target_lufs - mix_lufs_db
@@ -304,6 +320,15 @@ def main():
             sum_others_base = sum_others_base * 10 ** (gain_db / 20)
         except Exception as e:
             print(f"Warning: Could not normalize others stem: {e}")
+        
+        torchaudio.save(song_out_dir / "target_baseline.wav", target_stem_base, 44100)
+        torchaudio.save(song_out_dir / "others_baseline.wav", sum_others_base, 44100)
+        
+        # Text
+        target_stem_text = pred_tracks_text[0, :, target_idx, :]
+        other_stems_text = pred_tracks_text[0].clone()
+        other_stems_text[:, target_idx, :] = 0
+        sum_others_text = other_stems_text.sum(dim=1)
 
         try:
             mix_lufs_db = meter.integrated_loudness(target_stem_text.squeeze(0).permute(1, 0).cpu().numpy())
@@ -324,31 +349,6 @@ def main():
             sum_others_text = sum_others_text * 10 ** (gain_db / 20)
         except Exception as e:
             print(f"Warning: Could not normalize others stem: {e}")
-
-        # --- Save Audio ---
-        song_out_dir = output_dir / song_name
-        song_out_dir.mkdir(exist_ok=True)
-        
-        # Save Mixes
-        torchaudio.save(song_out_dir / "mix_baseline.wav", pred_mix_base.squeeze(0), 44100)
-        torchaudio.save(song_out_dir / "mix_text.wav", pred_mix_text.squeeze(0), 44100)
-        
-        # Save Stems (Target and Sum of Others)
-        # Baseline
-        # pred_tracks_base shape: (bs, 2, num_tracks, seq_len)
-        target_stem_base = pred_tracks_base[0, :, target_idx, :] # (2, len)
-        other_stems_base = pred_tracks_base[0].clone()
-        other_stems_base[:, target_idx, :] = 0
-        sum_others_base = other_stems_base.sum(dim=1) # (2, len)
-        
-        torchaudio.save(song_out_dir / "target_baseline.wav", target_stem_base, 44100)
-        torchaudio.save(song_out_dir / "others_baseline.wav", sum_others_base, 44100)
-        
-        # Text
-        target_stem_text = pred_tracks_text[0, :, target_idx, :]
-        other_stems_text = pred_tracks_text[0].clone()
-        other_stems_text[:, target_idx, :] = 0
-        sum_others_text = other_stems_text.sum(dim=1)
         
         torchaudio.save(song_out_dir / "target_text.wav", target_stem_text, 44100)
         torchaudio.save(song_out_dir / "others_text.wav", sum_others_text, 44100)
