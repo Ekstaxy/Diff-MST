@@ -207,16 +207,20 @@ def main():
         start_idx = 0
         if max_length > 44100 * 30:
             start_idx = 44100 * 10 # Start 10s in
+            
+        # Slice tracks to 20s (same as eval_loop) to avoid OOM
+        slice_len = 44100 * 20
+        tracks_slice = tracks_tensor[..., start_idx : start_idx + slice_len].clone()
         
         # --- Step 1: Baseline (Audio Reference Only) ---
         with torch.no_grad():
             res_baseline = run_diffmst(
-                tracks_tensor.clone(),
+                tracks_slice,
                 ref_audio.clone(),
                 model,
                 mix_console,
                 text=None,
-                track_start_idx=start_idx,
+                track_start_idx=0,
                 ref_start_idx=start_idx
             )
             (pred_mix_base, pred_tracks_base, pred_track_params, pred_fx_params, pred_master_params) = res_baseline
@@ -238,13 +242,13 @@ def main():
         
         with torch.no_grad():
             res_text = run_diffmst(
-                tracks_tensor.clone(),
+                tracks_slice,
                 ref_audio_text.clone(),
                 model,
                 mix_console,
                 text=text_input,
-                track_start_idx=start_idx,
-                ref_start_idx=start_idx,
+                track_start_idx=0,
+                ref_start_idx=0,
                 prev_track_param_dict=pred_track_params,
                 prev_fx_bus_param_dict=pred_fx_params,
                 prev_master_bus_param_dict=pred_master_params
