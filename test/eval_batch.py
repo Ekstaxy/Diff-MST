@@ -111,6 +111,7 @@ def main():
     valid_songs = []
     for song_path in songs:
         full_path = os.path.join(args.dataset_root, song_path)
+        print(f"Checking {full_path}...")
         # Check if directory exists (song_path usually points to RAW folder)
         # But dataset_root might be the parent of MedleyDB_V1 etc.
         # Let's try to construct the path
