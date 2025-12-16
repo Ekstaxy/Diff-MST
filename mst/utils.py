@@ -59,6 +59,7 @@ def run_diffmst(
     prev_fx_bus_param_dict: Optional[dict] = None,
     prev_master_bus_param_dict: Optional[dict] = None,
     prev_track_param_dict: Optional[dict] = None,
+    use_master_bus: bool = True,
 ):
     """Run the differentiable mix style transfer model.
 
@@ -70,6 +71,7 @@ def run_diffmst(
         text (tuple, optional): Tuple of text strings with settings. (track_idx, weight, text). Default: None.
         track_start_idx (int, optional): Start index of the track to use. Default: 0.
         ref_start_idx (int, optional): Start index of the reference mix to use. Default: 0.
+        use_master_bus (bool, optional): Whether to use the master bus. Default: True.
 
     Returns:
         pred_mix (Tensor): Predicted mix with shape (bs, 2, seq_len).
@@ -85,10 +87,10 @@ def run_diffmst(
     use_track_eq = True
     use_track_compressor = True
     use_fx_bus = False
-    use_master_bus = True
+    # use_master_bus = True
     use_output_fader = True
 
-    analysis_len = 44100 * 10
+    analysis_len = 44100 * 20
     meter = pyln.Meter(44100)
 
     # crop the input tracks and reference mix to the analysis length

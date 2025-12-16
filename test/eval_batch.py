@@ -231,7 +231,8 @@ def main():
                 mix_console,
                 text=None,
                 track_start_idx=0,
-                ref_start_idx=0
+                ref_start_idx=0,
+                use_master_bus=False
             )
             (pred_mix_base, pred_tracks_base, pred_track_params, pred_fx_params, pred_master_params) = res_baseline
             
@@ -257,7 +258,8 @@ def main():
                 ref_start_idx=0,
                 prev_track_param_dict=pred_track_params,
                 prev_fx_bus_param_dict=pred_fx_params,
-                prev_master_bus_param_dict=pred_master_params
+                prev_master_bus_param_dict=pred_master_params,
+                use_master_bus=False
             )
             (pred_mix_text, pred_tracks_text, _, _, _) = res_text
 
