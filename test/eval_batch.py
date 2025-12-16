@@ -261,6 +261,28 @@ def main():
             )
             (pred_mix_text, pred_tracks_text, _, _, _) = res_text
 
+        # --- Loudness Normalization ---
+        # Normalize mixes to target LUFS
+        try:
+            mix_lufs_db = meter.integrated_loudness(pred_mix_base.squeeze(0).permute(1, 0).cpu().numpy())
+            lufs_delta_db = args.target_lufs - mix_lufs_db
+            gain_db = lufs_delta_db
+            pred_mix_base = pred_mix_base * 10 ** (gain_db / 20)
+            # Apply same gain to stems to maintain balance
+            pred_tracks_base = pred_tracks_base * 10 ** (gain_db / 20)
+        except Exception as e:
+            print(f"Warning: Could not normalize baseline mix: {e}")
+
+        try:
+            mix_lufs_db = meter.integrated_loudness(pred_mix_text.squeeze(0).permute(1, 0).cpu().numpy())
+            lufs_delta_db = args.target_lufs - mix_lufs_db
+            gain_db = lufs_delta_db
+            pred_mix_text = pred_mix_text * 10 ** (gain_db / 20)
+            # Apply same gain to stems to maintain balance
+            pred_tracks_text = pred_tracks_text * 10 ** (gain_db / 20)
+        except Exception as e:
+            print(f"Warning: Could not normalize text mix: {e}")
+
         # --- Save Audio ---
         song_out_dir = output_dir / song_name
         song_out_dir.mkdir(exist_ok=True)
