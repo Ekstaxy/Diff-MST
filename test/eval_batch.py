@@ -19,18 +19,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from mst.utils import load_diffmst, run_diffmst
 import eval_metric
 
-# Try to import CLAP
-try:
-    import laion_clap
-    clap_model = laion_clap.CLAP_Module(enable_fusion=False)
-    clap_model.load_ckpt(verbose=False)
-    HAS_CLAP = True
-except ImportError:
-    print("CLAP not found, text metrics will be skipped.")
-    HAS_CLAP = False
-except Exception as e:
-    print(f"Error loading CLAP: {e}")
-    HAS_CLAP = False
+# CLAP import removed to match eval_loop.py behavior
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Batch evaluation of mixing with text prompts')
@@ -53,27 +43,7 @@ def parse_args():
     
     return parser.parse_args()
 
-def get_clap_score(audio, text, sr=44100):
-    if not HAS_CLAP:
-        return 0.0
-    
-    # Resample to 48k if needed (CLAP usually expects 48k)
-    if sr != 48000:
-        audio = torchaudio.functional.resample(audio, sr, 48000)
-    
-    # Ensure audio is (T,) or (1, T)
-    if audio.ndim > 1:
-        audio = audio.mean(dim=0) # Mix to mono
-    
-    audio = audio.unsqueeze(0) # (1, T)
-    
-    # Get embeddings
-    audio_emb = clap_model.get_audio_embedding_from_data(x=audio, use_tensor=True)
-    text_emb = clap_model.get_text_embedding([text], use_tensor=True)
-    
-    # Cosine similarity
-    similarity = torch.nn.functional.cosine_similarity(audio_emb, text_emb)
-    return similarity.item()
+
 
 def make_serializable(obj):
     if isinstance(obj, dict):
@@ -301,12 +271,7 @@ def main():
         metrics.update(compute_audio_metrics(sum_others_base, "others_base"))
         metrics.update(compute_audio_metrics(sum_others_text, "others_text"))
         
-        # Text Metrics (CLAP)
-        if HAS_CLAP:
-            metrics["clap_target_base"] = get_clap_score(target_stem_base, args.text_prompt)
-            metrics["clap_target_text"] = get_clap_score(target_stem_text, args.text_prompt)
-            metrics["clap_others_base"] = get_clap_score(sum_others_base, args.text_prompt)
-            metrics["clap_others_text"] = get_clap_score(sum_others_text, args.text_prompt)
+
             
         metrics["song"] = song_name
         all_metrics.append(metrics)
