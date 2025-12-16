@@ -3,6 +3,9 @@ import numpy as np
 import argparse
 import os
 import glob
+import csv
+import matplotlib.pyplot as plt
+import librosa.display
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Do evaluation of mixing metrics')
@@ -100,6 +103,34 @@ def get_crest_factor(waveform):
     
     return np.mean(cf_db)
 
+def plot_spectrum(waveform, sr, filename, output_dir="eval_plots"):
+    """
+    Plot the average power spectrum of the waveform.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Compute STFT
+    D = librosa.stft(waveform)
+    S_db = librosa.amplitude_to_db(np.abs(D), ref=np.max)
+    
+    # Average over time
+    S_db_mean = np.mean(S_db, axis=1)
+    freqs = librosa.fft_frequencies(sr=sr)
+    
+    plt.figure(figsize=(10, 6))
+    plt.plot(freqs, S_db_mean)
+    plt.xlabel('Frequency (Hz)')
+    plt.ylabel('Amplitude (dB)')
+    plt.title(f'Average Frequency Spectrum - {filename}')
+    plt.xscale('log')
+    plt.grid(True, which="both", ls="-", alpha=0.5)
+    plt.xlim(20, sr/2) # Human hearing range
+    
+    plot_path = os.path.join(output_dir, f"{os.path.splitext(filename)[0]}_spectrum.png")
+    plt.savefig(plot_path)
+    plt.close()
+    print(f"Saved spectrum plot to {plot_path}")
+
 def foward(waveform):
     # Example function to demonstrate usage of the above metrics
     spectral_centroid = get_spectral_centroid(waveform)
@@ -130,6 +161,9 @@ if __name__ == "__main__":
             waveform, sr = librosa.load(file_path, sr=44100, mono=True)
             metrics = foward(waveform)
             
+            # Plot spectrum
+            plot_spectrum(waveform, sr, os.path.basename(file_path))
+            
             # Add filename to metrics for identification
             metrics['filename'] = os.path.basename(file_path)
             all_results.append(metrics)
@@ -137,6 +171,16 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Error processing {file_path}: {e}")
             
+    # Save results to CSV
+    if all_results:
+        csv_file = "eval_metrics_results.csv"
+        keys = all_results[0].keys()
+        with open(csv_file, 'w', newline='') as f:
+            dict_writer = csv.DictWriter(f, fieldnames=keys)
+            dict_writer.writeheader()
+            dict_writer.writerows(all_results)
+        print(f"\nMetrics saved to {csv_file}")
+
     print("\nAll Results:")
     for res in all_results:
         print(res['filename'])
