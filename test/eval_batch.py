@@ -175,26 +175,27 @@ def main():
                 audio = torchaudio.functional.resample(audio, sr, 44100)
             if audio.shape[0] == 2:
                 audio = audio.mean(dim=0, keepdim=True)
-            tracks.append(audio)
-            lengths.append(audio.shape[-1])
+            
+            chs, seq_len = audio.shape
+            for ch_idx in range(chs):
+                tracks.append(audio[ch_idx : ch_idx + 1, :])
+                lengths.append(audio.shape[-1])
             
         max_length = max(lengths)
         # Pad tracks
-        padded_tracks = []
-        for t in tracks:
-            padded_tracks.append(torch.nn.functional.pad(t, (0, max_length - t.shape[-1])))
+        for track_idx in range(len(tracks)):
+            tracks[track_idx] = torch.nn.functional.pad(
+                tracks[track_idx], (0, max_length - lengths[track_idx])
+            )
         
-        tracks_tensor = torch.cat(padded_tracks, dim=0).unsqueeze(0) # (1, num_tracks, len)
-        # tracks needs to be (bs, num_tracks, 1, seq_len) for run_diffmst?
-        # Let's check run_diffmst signature in utils.py
-        # Args: tracks (Tensor): Set of input tracks with shape (bs, num_tracks, 1, seq_len).
-        tracks_tensor = tracks_tensor.unsqueeze(2) # (1, num_tracks, 1, len)
+        tracks_tensor = torch.cat(tracks, dim=0)
+        tracks_tensor = tracks_tensor.view(1, -1, max_length) # (1, num_tracks, len)
         
         # Load reference mix
         ref_audio, ref_sr = torchaudio.load(mix_filepath, backend="soundfile")
         if ref_sr != 44100:
             ref_audio = torchaudio.functional.resample(ref_audio, ref_sr, 44100)
-        ref_audio = ref_audio.unsqueeze(0) # (1, 2, len)
+        ref_audio = ref_audio.view(1, 2, -1) # (1, 2, len)
         
         # Ensure lengths match for processing (crop to min length or pad)
         # run_diffmst crops to analysis_len (10s) by default if not specified?
@@ -218,7 +219,7 @@ def main():
                 track_start_idx=start_idx,
                 ref_start_idx=start_idx
             )
-            (pred_mix_base, pred_tracks_base, _, _, _) = res_baseline
+            (pred_mix_base, pred_tracks_base, pred_track_params, pred_fx_params, pred_master_params) = res_baseline
             
         # --- Step 2: Text Prompt on Target Track ---
         # Target track index
@@ -229,17 +230,26 @@ def main():
             
         text_input = (target_idx, 1.0, args.text_prompt)
         
+        # Prepare reference for text prompt (use output of baseline)
+        # If targeting a track, we need separated tracks as reference
+        num_tracks = pred_tracks_base.shape[2]
+        # pred_tracks_base is (bs, 2, num_tracks, len) -> view as (bs, 2*num_tracks, len)
+        ref_audio_text = pred_tracks_base.view(1, 2*num_tracks, -1)
+        
         with torch.no_grad():
             res_text = run_diffmst(
                 tracks_tensor.clone(),
-                ref_audio.clone(),
+                ref_audio_text.clone(),
                 model,
                 mix_console,
                 text=text_input,
                 track_start_idx=start_idx,
-                ref_start_idx=start_idx
+                ref_start_idx=start_idx,
+                prev_track_param_dict=pred_track_params,
+                prev_fx_bus_param_dict=pred_fx_params,
+                prev_master_bus_param_dict=pred_master_params
             )
-            (pred_mix_text, pred_tracks_text, pred_track_params, pred_fx_params, pred_master_params) = res_text
+            (pred_mix_text, pred_tracks_text, _, _, _) = res_text
 
         # --- Save Audio ---
         song_out_dir = output_dir / song_name
