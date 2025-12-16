@@ -305,6 +305,26 @@ def main():
         except Exception as e:
             print(f"Warning: Could not normalize others stem: {e}")
 
+        try:
+            mix_lufs_db = meter.integrated_loudness(target_stem_text.squeeze(0).permute(1, 0).cpu().numpy())
+            lufs_delta_db = args.target_lufs - mix_lufs_db
+            gain_db = lufs_delta_db
+            target_stem_text = target_stem_text * 10 ** (gain_db / 20)
+            # Apply same gain to stems to maintain balance
+            target_stem_text = target_stem_text * 10 ** (gain_db / 20)
+        except Exception as e:
+            print(f"Warning: Could not normalize target stem: {e}")
+
+        try:
+            mix_lufs_db = meter.integrated_loudness(sum_others_text.squeeze(0).permute(1, 0).cpu().numpy())
+            lufs_delta_db = args.target_lufs - mix_lufs_db
+            gain_db = lufs_delta_db
+            sum_others_text = sum_others_text * 10 ** (gain_db / 20)
+            # Apply same gain to stems to maintain balance
+            sum_others_text = sum_others_text * 10 ** (gain_db / 20)
+        except Exception as e:
+            print(f"Warning: Could not normalize others stem: {e}")
+
         # --- Save Audio ---
         song_out_dir = output_dir / song_name
         song_out_dir.mkdir(exist_ok=True)
