@@ -23,7 +23,7 @@ import eval_metric
 try:
     import laion_clap
     clap_model = laion_clap.CLAP_Module(enable_fusion=False)
-    clap_model.load_ckpt()
+    clap_model.load_ckpt(verbose=False)
     HAS_CLAP = True
 except ImportError:
     print("CLAP not found, text metrics will be skipped.")
