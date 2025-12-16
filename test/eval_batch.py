@@ -261,16 +261,16 @@ def main():
             # waveform: (2, len) -> mix to mono for metrics
             mono = waveform.mean(dim=0).numpy()
             return {
-                f"sc_{name_suffix}": eval_metric.get_spectral_centroid(mono),
-                f"br_{name_suffix}": eval_metric.get_band_ratio(mono),
-                f"cf_{name_suffix}": eval_metric.get_crest_factor(mono)
+                f"spectral_centroid_{name_suffix}": eval_metric.get_spectral_centroid(mono),
+                f"band_ratio_{name_suffix}": eval_metric.get_band_ratio(mono),
+                f"crest_factor_{name_suffix}": eval_metric.get_crest_factor(mono)
             }
 
         metrics = {}
-        metrics.update(compute_audio_metrics(target_stem_base, "target_base"))
-        metrics.update(compute_audio_metrics(target_stem_text, "target_text"))
-        metrics.update(compute_audio_metrics(sum_others_base, "others_base"))
-        metrics.update(compute_audio_metrics(sum_others_text, "others_text"))
+        metrics.update(compute_audio_metrics(target_stem_base, "target_audio_base"))
+        metrics.update(compute_audio_metrics(target_stem_text, "target_text_modified"))
+        metrics.update(compute_audio_metrics(sum_others_base, "others_audio_base"))
+        metrics.update(compute_audio_metrics(sum_others_text, "others_text_modified"))
         
 
             
