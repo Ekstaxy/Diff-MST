@@ -106,7 +106,7 @@ class MixStyleTransferModel(torch.nn.Module):
 
                     # Convert to numpy for slerp
                     v1 = mix_embeds_selected.detach().cpu().numpy()
-                    v2 = text_embed # text_embed is already numpy array
+                    v2 = text_embed.squeeze() # Ensure 1D array
 
                     v1_norm = v1 / np.linalg.norm(v1)
                     v2_norm = v2 / np.linalg.norm(v2)
