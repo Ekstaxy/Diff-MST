@@ -87,7 +87,7 @@ def run_diffmst(
     use_track_eq = True
     use_track_compressor = True
     use_fx_bus = False
-    # use_master_bus = True
+    use_master_bus = False
     use_output_fader = True
 
     analysis_len = 44100 * 20
