@@ -19,4 +19,6 @@ def spherical_linear_interpolation(emb1: np.ndarray, emb2: np.ndarray, alpha: fl
     factor1 = np.sin((1 - alpha) * omega) / sin_omega
     factor2 = np.sin(alpha * omega) / sin_omega
 
-    return factor1 * emb1 + factor2 * emb2
+    new_emb = factor1 * emb1 + factor2 * emb2
+
+    return new_emb

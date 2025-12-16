@@ -54,6 +54,7 @@ def run_diffmst(
     model: torch.nn.Module,
     mix_console: torch.nn.Module,
     text: Optional[tuple] = None,
+    interpolation: str = "linear",
     track_start_idx: int = 0,
     ref_start_idx: int = 0,
     prev_fx_bus_param_dict: Optional[dict] = None,
@@ -141,7 +142,7 @@ def run_diffmst(
 
     #  ---- run model to estimate mix parmaeters using analysis audio ----
     pred_track_params, pred_fx_bus_params, pred_master_bus_params = model(
-        norm_analysis_tracks, analysis_ref, text=text
+        norm_analysis_tracks, analysis_ref, text=text, interpolation=interpolation
     )
     
     # Master bus control with text

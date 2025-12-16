@@ -45,7 +45,8 @@ class MixStyleTransferModel(torch.nn.Module):
         self,
         tracks: torch.torch.Tensor,
         ref_mix: torch.torch.Tensor,
-        text: Optional[tuple] = None,                                       
+        text: Optional[tuple] = None,       
+        interpolation: str = "linear",                                
         track_padding_mask: Optional[torch.Tensor] = None,
     ):
         bs, num_tracks, seq_len = tracks.size()
@@ -81,10 +82,45 @@ class MixStyleTransferModel(torch.nn.Module):
             track_idx = track_idx if track_idx >=0 else 0
             num_tracks_mix = mix_embeds.size(1) // 2
 
-            for i in range(2):
-                mix_embeds_selected = mix_embeds[0, track_idx + i * num_tracks_mix, :] # select the embed for the specified track
-                mix_embeds[0, track_idx + i * num_tracks_mix, :] = (1 - alpha) * mix_embeds_selected + alpha * text_embed  # linear interpolation
+            # emb1_norm = emb1 / np.linalg.norm(emb1)
+            # emb2_norm = emb2 / np.linalg.norm(emb2)
 
+            # dot_product = np.dot(emb1_norm, emb2_norm)
+            # omega = np.arccos(np.clip(dot_product, -1.0, 1.0))
+            # sin_omega = np.sin(omega)
+
+            # if sin_omega < 1e-6:  # Fall back to linear interpolation
+            #     return linear_interpolation(emb1, emb2, alpha)
+
+            # factor1 = np.sin((1 - alpha) * omega) / sin_omega
+            # factor2 = np.sin(alpha * omega) / sin_omega
+
+            # new_emb = factor1 * emb1 + factor2 * emb2
+
+            for i in range(2):
+                if interpolation == "linear":
+                    mix_embeds_selected = mix_embeds[0, track_idx + i * num_tracks_mix, :] # select the embed for the specified track
+                    mix_embeds[0, track_idx + i * num_tracks_mix, :] = (1 - alpha) * mix_embeds_selected + alpha * text_embed  # linear interpolation
+                elif interpolation == "slerp":
+                    mix_embeds_selected = mix_embeds[0, track_idx + i * num_tracks_mix, :] # select the embed for the specified track
+
+                    mix_embeds_selected_norm = mix_embeds_selected / torch.norm(mix_embeds_selected)
+                    text_embed_norm = text_embed / torch.norm(text_embed)
+
+                    dot_product = torch.dot(mix_embeds_selected_norm, text_embed_norm)
+                    omega = torch.acos(torch.clamp(dot_product, -1.0, 1.0))
+                    sin_omega = torch.sin(omega)
+
+                    if sin_omega < 1e-6:  # Fall back to linear interpolation
+                        mix_embeds[0, track_idx + i * num_tracks_mix, :] = (1 - alpha) * mix_embeds_selected + alpha * text_embed
+                    else:
+                        factor1 = torch.sin((1 - alpha) * omega) / sin_omega
+                        factor2 = torch.sin(alpha * omega) / sin_omega
+
+                        new_emb = factor1 * mix_embeds_selected + factor2 * text_embed
+                        mix_embeds[0, track_idx + i * num_tracks_mix, :] = new_emb
+                else:
+                    raise ValueError(f"Unknown interpolation method: {interpolation}")
 
         # controller will predict mix parameters for each stem based on embeds
         track_params, fx_bus_params, master_bus_params = self.controller(

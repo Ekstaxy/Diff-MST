@@ -36,6 +36,7 @@ def parse_args():
     # Evaluation parameters
     parser.add_argument("--num_songs", type=int, default=10, help='Number of songs to evaluate')
     parser.add_argument("--text_prompt", type=str, default="Bright", help='Text prompt to apply')
+    parser.add_argument("--interpolation", type=str, default="linear", help='Interpolation method: linear or slerp')
     parser.add_argument("--target_track_idx", type=int, default=1, help='Track index to apply text prompt to (0-based)')
     parser.add_argument("--output_dir", type=str, default="./eval_batch_outputs", help='Directory to save outputs')
     parser.add_argument("--exp_name", type=str, default="batch_test", help='Experiment name')
@@ -291,6 +292,7 @@ def main():
                 model,
                 mix_console,
                 text=None,
+                interpolation=args.interpolation,
                 track_start_idx=0,
                 ref_start_idx=0,
                 use_master_bus=False
@@ -315,6 +317,7 @@ def main():
                 model,
                 mix_console,
                 text=text_input,
+                interpolation=args.interpolation,
                 track_start_idx=0,
                 ref_start_idx=0,
                 prev_track_param_dict=pred_track_params,

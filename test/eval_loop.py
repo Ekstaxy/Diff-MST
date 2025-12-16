@@ -327,6 +327,7 @@ def main():
                         model,
                         mix_console,
                         text=example["ref"],
+                        interpolation="linear",
                         track_start_idx=track_start_idx,
                         ref_start_idx=ref_start_idx,
                         prev_fx_bus_param_dict=prev_fx_bus_param_dict,
