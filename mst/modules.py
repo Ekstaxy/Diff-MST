@@ -105,11 +105,15 @@ class MixStyleTransferModel(torch.nn.Module):
                     mix_embeds_selected = mix_embeds[0, track_idx + i * num_tracks_mix, :] # select the embed for the specified track
 
                     # Convert to numpy for slerp
-                    v1 = mix_embeds_selected.detach().cpu().numpy()
-                    v2 = text_embed.squeeze() # Ensure 1D array
+                    v1 = mix_embeds_selected.detach().cpu().numpy().squeeze()
+                    
+                    if isinstance(text_embed, torch.Tensor):
+                        v2 = text_embed.detach().cpu().numpy().squeeze()
+                    else:
+                        v2 = text_embed.squeeze()
 
-                    v1_norm = v1 / np.linalg.norm(v1)
-                    v2_norm = v2 / np.linalg.norm(v2)
+                    v1_norm = v1 / (np.linalg.norm(v1) + 1e-8)
+                    v2_norm = v2 / (np.linalg.norm(v2) + 1e-8)
 
                     dot_product = np.dot(v1_norm, v2_norm)
                     omega = np.arccos(np.clip(dot_product, -1.0, 1.0))
