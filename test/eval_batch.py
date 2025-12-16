@@ -60,6 +60,67 @@ def make_serializable(obj):
     else:
         return str(obj)
 
+def normalize_audio(mix, stems, target_lufs, meter, name="mix"):
+    # mix: (1, 2, len)
+    # stems: (1, 2, num_tracks, len)
+    try:
+        # Check for silence first
+        if mix.abs().max() < 1e-6:
+            print(f"Warning: {name} is silent (max < 1e-6). Skipping normalization.")
+            return mix, stems
+
+        mix_np = mix.squeeze(0).permute(1, 0).cpu().numpy() # (len, 2)
+        mix_lufs_db = meter.integrated_loudness(mix_np)
+        
+        if mix_lufs_db == -float('inf'):
+                print(f"Warning: {name} LUFS is -inf. Applying default gain +26dB.")
+                gain_db = 26.0
+        else:
+            lufs_delta_db = target_lufs - mix_lufs_db
+            gain_db = lufs_delta_db
+        
+        print(f"Normalizing {name}: Current LUFS = {mix_lufs_db:.2f}, Gain = {gain_db:.2f} dB")
+        
+        mix = mix * 10 ** (gain_db / 20)
+        stems = stems * 10 ** (gain_db / 20)
+        return mix, stems
+    except Exception as e:
+        print(f"Warning: Could not normalize {name}: {e}. Applying default gain +26dB.")
+        # Fallback: Input is likely around -48 LUFS, target is -22 LUFS -> +26dB
+        gain_db = 26.0
+        mix = mix * 10 ** (gain_db / 20)
+        stems = stems * 10 ** (gain_db / 20)
+        return mix, stems
+
+def normalize_stem(waveform, target_lufs, meter, name="stem"):
+    # waveform: (2, len)
+    try:
+        if waveform.abs().max() < 1e-6:
+            print(f"Warning: {name} is silent.")
+            return waveform
+        
+        wav_np = waveform.permute(1, 0).cpu().numpy()
+        lufs = meter.integrated_loudness(wav_np)
+        
+        if lufs == -float('inf'):
+            gain_db = 26.0
+        else:
+            gain_db = target_lufs - lufs
+        
+        return waveform * 10 ** (gain_db / 20)
+    except Exception as e:
+        print(f"Warning: Could not normalize {name}: {e}")
+        return waveform * 10 ** (26.0 / 20) # Fallback gain
+
+def compute_audio_metrics(waveform, name_suffix):
+    # waveform: (2, len) -> mix to mono for metrics
+    mono = waveform.mean(dim=0).numpy()
+    return {
+        f"spectral_centroid_{name_suffix}": eval_metric.get_spectral_centroid(mono),
+        f"band_ratio_{name_suffix}": eval_metric.get_band_ratio(mono),
+        f"crest_factor_{name_suffix}": eval_metric.get_crest_factor(mono)
+    }
+
 def main():
     args = parse_args()
     
@@ -265,25 +326,8 @@ def main():
 
         # --- Loudness Normalization ---
         # Normalize mixes to target LUFS
-        try:
-            mix_lufs_db = meter.integrated_loudness(pred_mix_base.squeeze(0).permute(1, 0).cpu().numpy())
-            lufs_delta_db = args.target_lufs - mix_lufs_db
-            gain_db = lufs_delta_db
-            pred_mix_base = pred_mix_base * 10 ** (gain_db / 20)
-            # Apply same gain to stems to maintain balance
-            pred_tracks_base = pred_tracks_base * 10 ** (gain_db / 20)
-        except Exception as e:
-            print(f"Warning: Could not normalize baseline mix: {e}")
-
-        try:
-            mix_lufs_db = meter.integrated_loudness(pred_mix_text.squeeze(0).permute(1, 0).cpu().numpy())
-            lufs_delta_db = args.target_lufs - mix_lufs_db
-            gain_db = lufs_delta_db
-            pred_mix_text = pred_mix_text * 10 ** (gain_db / 20)
-            # Apply same gain to stems to maintain balance
-            pred_tracks_text = pred_tracks_text * 10 ** (gain_db / 20)
-        except Exception as e:
-            print(f"Warning: Could not normalize text mix: {e}")
+        pred_mix_base, pred_tracks_base = normalize_audio(pred_mix_base, pred_tracks_base, args.target_lufs, meter, "baseline")
+        pred_mix_text, pred_tracks_text = normalize_audio(pred_mix_text, pred_tracks_text, args.target_lufs, meter, "text")
 
         # --- Save Audio ---
         song_out_dir = output_dir / song_name
@@ -295,32 +339,15 @@ def main():
         
         # Save Stems (Target and Sum of Others)
         # Baseline
-        # pred_tracks_base shape: (bs, 2, num_tracks, seq_len)
         target_stem_base = pred_tracks_base[0, :, target_idx, :] # (2, len)
         other_stems_base = pred_tracks_base[0].clone()
         other_stems_base[:, target_idx, :] = 0
         sum_others_base = other_stems_base.sum(dim=1) # (2, len)
-
-        try:
-            mix_lufs_db = meter.integrated_loudness(target_stem_base.squeeze(0).permute(1, 0).cpu().numpy())
-            lufs_delta_db = args.target_lufs - mix_lufs_db
-            gain_db = lufs_delta_db
-            target_stem_base = target_stem_base * 10 ** (gain_db / 20)
-            # Apply same gain to stems to maintain balance
-            target_stem_base = target_stem_base * 10 ** (gain_db / 20)
-        except Exception as e:
-            print(f"Warning: Could not normalize target stem: {e}")
-
-        try:
-            mix_lufs_db = meter.integrated_loudness(sum_others_base.squeeze(0).permute(1, 0).cpu().numpy())
-            lufs_delta_db = args.target_lufs - mix_lufs_db
-            gain_db = lufs_delta_db
-            sum_others_base = sum_others_base * 10 ** (gain_db / 20)
-            # Apply same gain to stems to maintain balance
-            sum_others_base = sum_others_base * 10 ** (gain_db / 20)
-        except Exception as e:
-            print(f"Warning: Could not normalize others stem: {e}")
         
+        # Normalize stems for audibility (Note: this changes relative mix balance in the saved file)
+        target_stem_base = normalize_stem(target_stem_base, args.target_lufs, meter, "target_base")
+        sum_others_base = normalize_stem(sum_others_base, args.target_lufs, meter, "others_base")
+
         torchaudio.save(song_out_dir / "target_baseline.wav", target_stem_base, 44100)
         torchaudio.save(song_out_dir / "others_baseline.wav", sum_others_base, 44100)
         
@@ -329,42 +356,16 @@ def main():
         other_stems_text = pred_tracks_text[0].clone()
         other_stems_text[:, target_idx, :] = 0
         sum_others_text = other_stems_text.sum(dim=1)
-
-        try:
-            mix_lufs_db = meter.integrated_loudness(target_stem_text.squeeze(0).permute(1, 0).cpu().numpy())
-            lufs_delta_db = args.target_lufs - mix_lufs_db
-            gain_db = lufs_delta_db
-            target_stem_text = target_stem_text * 10 ** (gain_db / 20)
-            # Apply same gain to stems to maintain balance
-            target_stem_text = target_stem_text * 10 ** (gain_db / 20)
-        except Exception as e:
-            print(f"Warning: Could not normalize target stem: {e}")
-
-        try:
-            mix_lufs_db = meter.integrated_loudness(sum_others_text.squeeze(0).permute(1, 0).cpu().numpy())
-            lufs_delta_db = args.target_lufs - mix_lufs_db
-            gain_db = lufs_delta_db
-            sum_others_text = sum_others_text * 10 ** (gain_db / 20)
-            # Apply same gain to stems to maintain balance
-            sum_others_text = sum_others_text * 10 ** (gain_db / 20)
-        except Exception as e:
-            print(f"Warning: Could not normalize others stem: {e}")
         
+        target_stem_text = normalize_stem(target_stem_text, args.target_lufs, meter, "target_text")
+        sum_others_text = normalize_stem(sum_others_text, args.target_lufs, meter, "others_text")
+
         torchaudio.save(song_out_dir / "target_text.wav", target_stem_text, 44100)
         torchaudio.save(song_out_dir / "others_text.wav", sum_others_text, 44100)
         
         # --- Compute Metrics ---
         # Audio Metrics (Spectral Centroid, Band Ratio, Crest Factor)
         # We compare Target Track (Base vs Text) and Others (Base vs Text)
-        
-        def compute_audio_metrics(waveform, name_suffix):
-            # waveform: (2, len) -> mix to mono for metrics
-            mono = waveform.mean(dim=0).numpy()
-            return {
-                f"spectral_centroid_{name_suffix}": eval_metric.get_spectral_centroid(mono),
-                f"band_ratio_{name_suffix}": eval_metric.get_band_ratio(mono),
-                f"crest_factor_{name_suffix}": eval_metric.get_crest_factor(mono)
-            }
 
         metrics = {}
         metrics.update(compute_audio_metrics(target_stem_base, "target_audio_base"))
