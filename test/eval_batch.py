@@ -171,36 +171,72 @@ def main():
         # run_diffmst crops to analysis_len (10s) by default if not specified?
         # It crops to analysis_len inside.
         
+        # Determine target track index early to find active slice
+        target_idx = args.target_track_idx
+        if target_idx >= tracks_tensor.shape[1]:
+            print(f"Target track index {target_idx} out of bounds. Using 0.")
+            target_idx = 0
+
         # We want to process a segment. Let's pick a random segment or the beginning.
         # eval_loop uses verse/chorus indices. Here we might just use a fixed segment or random.
         # Let's use a segment from the middle to avoid silence.
         start_idx = 0
-        if max_length > 44100 * 30:
-            start_idx = 44100 * 10 # Start 10s in
-            
-        # Slice tracks to 20s (same as eval_loop) to avoid OOM
         slice_len = 44100 * 20
+        
+        # Search for a slice where the target track is active
+        found_active = False
+        if max_length > slice_len:
+            # Scan in 5s increments
+            step = 44100 * 5
+            best_energy = -1.0
+            best_idx = 0
+            
+            # Limit scan to avoid taking too long on very long tracks
+            scan_end = max_length - slice_len
+            
+            for try_idx in range(0, scan_end, step):
+                # Check energy of target track in this slice
+                # tracks_tensor: (1, num_tracks, len)
+                target_slice = tracks_tensor[0, target_idx, try_idx : try_idx + slice_len]
+                energy = target_slice.pow(2).mean().item()
+                
+                if energy > 1e-4: # Threshold for "active"
+                    start_idx = try_idx
+                    found_active = True
+                    break
+                
+                if energy > best_energy:
+                    best_energy = energy
+                    best_idx = try_idx
+            
+            if not found_active:
+                print(f"Warning: Could not find active slice for track {target_idx}. Using slice with max energy.")
+                start_idx = best_idx
+        
+        # Slice tracks to 20s (same as eval_loop) to avoid OOM
+        if start_idx + slice_len > tracks_tensor.shape[-1]:
+            start_idx = 0
+            if tracks_tensor.shape[-1] < slice_len:
+                slice_len = tracks_tensor.shape[-1]
+                
         tracks_slice = tracks_tensor[..., start_idx : start_idx + slice_len].clone()
+        ref_slice = ref_audio[..., start_idx : start_idx + slice_len].clone()
         
         # --- Step 1: Baseline (Audio Reference Only) ---
         with torch.no_grad():
             res_baseline = run_diffmst(
                 tracks_slice,
-                ref_audio.clone(),
+                ref_slice,
                 model,
                 mix_console,
                 text=None,
                 track_start_idx=0,
-                ref_start_idx=start_idx
+                ref_start_idx=0
             )
             (pred_mix_base, pred_tracks_base, pred_track_params, pred_fx_params, pred_master_params) = res_baseline
             
         # --- Step 2: Text Prompt on Target Track ---
-        # Target track index
-        target_idx = args.target_track_idx
-        if target_idx >= tracks_tensor.shape[1]:
-            print(f"Target track index {target_idx} out of bounds (num_tracks={tracks_tensor.shape[1]}). Using 0.")
-            target_idx = 0
+        # Target track index determined earlier
             
         text_input = (target_idx, 1.0, args.text_prompt)
         
