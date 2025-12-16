@@ -341,9 +341,12 @@ def main():
         values = [m[k] for m in all_metrics]
         avg_metrics[k] = sum(values) / len(values)
         
-    print("\nAverage Metrics:")
+    print("\n" + "="*60)
+    print(f"{'Metric':<40} | {'Value':<15}")
+    print("-" * 60)
     for k, v in avg_metrics.items():
-        print(f"{k}: {v:.4f}")
+        print(f"{k:<40} | {v:.4f}")
+    print("="*60 + "\n")
         
     with open(output_dir / "avg_metrics.json", 'w') as f:
         json.dump(avg_metrics, f, indent=4)
