@@ -104,21 +104,26 @@ class MixStyleTransferModel(torch.nn.Module):
                 elif interpolation == "slerp":
                     mix_embeds_selected = mix_embeds[0, track_idx + i * num_tracks_mix, :] # select the embed for the specified track
 
-                    mix_embeds_selected_norm = mix_embeds_selected / torch.norm(mix_embeds_selected)
-                    text_embed_norm = text_embed / torch.norm(text_embed)
+                    # Convert to numpy for slerp
+                    v1 = mix_embeds_selected.detach().cpu().numpy()
+                    v2 = text_embed # text_embed is already numpy array
 
-                    dot_product = torch.dot(mix_embeds_selected_norm, text_embed_norm)
-                    omega = torch.acos(torch.clamp(dot_product, -1.0, 1.0))
-                    sin_omega = torch.sin(omega)
+                    v1_norm = v1 / np.linalg.norm(v1)
+                    v2_norm = v2 / np.linalg.norm(v2)
+
+                    dot_product = np.dot(v1_norm, v2_norm)
+                    omega = np.arccos(np.clip(dot_product, -1.0, 1.0))
+                    sin_omega = np.sin(omega)
 
                     if sin_omega < 1e-6:  # Fall back to linear interpolation
-                        mix_embeds[0, track_idx + i * num_tracks_mix, :] = (1 - alpha) * mix_embeds_selected + alpha * text_embed
+                        new_emb = (1 - alpha) * v1 + alpha * v2
                     else:
-                        factor1 = torch.sin((1 - alpha) * omega) / sin_omega
-                        factor2 = torch.sin(alpha * omega) / sin_omega
+                        factor1 = np.sin((1 - alpha) * omega) / sin_omega
+                        factor2 = np.sin(alpha * omega) / sin_omega
 
-                        new_emb = factor1 * mix_embeds_selected + factor2 * text_embed
-                        mix_embeds[0, track_idx + i * num_tracks_mix, :] = new_emb
+                        new_emb = factor1 * v1 + factor2 * v2
+                    
+                    mix_embeds[0, track_idx + i * num_tracks_mix, :] = torch.from_numpy(new_emb).to(mix_embeds.device)
                 else:
                     raise ValueError(f"Unknown interpolation method: {interpolation}")
 
