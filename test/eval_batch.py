@@ -397,40 +397,44 @@ def main():
         other_stems_base[:, target_idx, :] = 0
         sum_others_base = other_stems_base.sum(dim=1) # (2, len)
         
-        # Text
-        target_stem_text = pred_tracks_text[0, :, target_idx, :]
-        other_stems_text = pred_tracks_text[0].clone()
-        other_stems_text[:, target_idx, :] = 0
-        sum_others_text = other_stems_text.sum(dim=1)
+        if args.num_iterations > 0:
+            # Text
+            target_stem_text = pred_tracks_text[0, :, target_idx, :]
+            other_stems_text = pred_tracks_text[0].clone()
+            other_stems_text[:, target_idx, :] = 0
+            sum_others_text = other_stems_text.sum(dim=1)
 
-        # --- Compute Metrics ---
-        # Audio Metrics (Spectral Centroid, Band Ratio, Crest Factor)
-        # We compare Target Track (Base vs Text) and Others (Base vs Text)
+            # --- Compute Metrics ---
+            # Audio Metrics (Spectral Centroid, Band Ratio, Crest Factor)
+            # We compare Target Track (Base vs Text) and Others (Base vs Text)
 
-        metrics = {}
-        metrics.update(compute_audio_metrics(target_stem_base, "target_audio_base"))
-        metrics.update(compute_audio_metrics(target_stem_text, "target_text_modified"))
-        metrics.update(compute_audio_metrics(sum_others_base, "others_audio_base"))
-        metrics.update(compute_audio_metrics(sum_others_text, "others_text_modified"))
+            metrics = {}
+            metrics.update(compute_audio_metrics(target_stem_base, "target_audio_base"))
+            metrics.update(compute_audio_metrics(target_stem_text, "target_text_modified"))
+            metrics.update(compute_audio_metrics(sum_others_base, "others_audio_base"))
+            metrics.update(compute_audio_metrics(sum_others_text, "others_text_modified"))
 
         # Compute AF Loss
         # pred_mix_base: (1, 2, len)
         # ref_slice: (1, 2, len)
         af_losses_base = af_loss_fn(pred_mix_base, ref_slice)
-        af_losses_text = af_loss_fn(pred_mix_text, ref_slice)
+        if args.num_iterations > 0:
+            af_losses_text = af_loss_fn(pred_mix_text, ref_slice)
         af_losses_sum = af_loss_fn(sum_mix, ref_slice)
 
         for k, v in af_losses_base.items():
             metrics[f"AF_base_{k}"] = v.item()
-        for k, v in af_losses_text.items():
-            metrics[f"AF_text_{k}"] = v.item()
+        if args.num_iterations > 1:
+            for k, v in af_losses_text.items():
+                metrics[f"AF_text_{k}"] = v.item()
         for k, v in af_losses_sum.items():
             metrics[f"AF_sum_{k}"] = v.item()
 
         # --- Loudness Normalization ---
         # Normalize mixes to target LUFS
         pred_mix_base, pred_tracks_base = normalize_audio(pred_mix_base, pred_tracks_base, args.target_lufs, meter, "baseline")
-        pred_mix_text, pred_tracks_text = normalize_audio(pred_mix_text, pred_tracks_text, args.target_lufs, meter, "text")
+        if args.num_iterations > 0:
+            pred_mix_text, pred_tracks_text = normalize_audio(pred_mix_text, pred_tracks_text, args.target_lufs, meter, "text")
         
         dummy_stems_sum = tracks_slice.unsqueeze(1).repeat(1, 2, 1, 1)
         sum_mix, _ = normalize_audio(sum_mix, dummy_stems_sum, args.target_lufs, meter, "sum")
@@ -441,7 +445,8 @@ def main():
         
         # Save Mixes
         torchaudio.save(song_out_dir / "mix_baseline.wav", pred_mix_base.squeeze(0), 44100)
-        torchaudio.save(song_out_dir / "mix_text.wav", pred_mix_text.squeeze(0), 44100)
+        if args.num_iterations > 0:
+            torchaudio.save(song_out_dir / "mix_text.wav", pred_mix_text.squeeze(0), 44100)
         torchaudio.save(song_out_dir / "mix_sum.wav", sum_mix.squeeze(0), 44100)
         
         # Normalize stems for audibility (Note: this changes relative mix balance in the saved file)
@@ -451,11 +456,12 @@ def main():
         torchaudio.save(song_out_dir / "target_baseline.wav", target_stem_base, 44100)
         torchaudio.save(song_out_dir / "others_baseline.wav", sum_others_base, 44100)
         
-        target_stem_text = normalize_stem(target_stem_text, args.target_lufs, meter, "target_text")
-        sum_others_text = normalize_stem(sum_others_text, args.target_lufs, meter, "others_text")
+        if args.num_iterations > 0:
+            target_stem_text = normalize_stem(target_stem_text, args.target_lufs, meter, "target_text")
+            sum_others_text = normalize_stem(sum_others_text, args.target_lufs, meter, "others_text")
 
-        torchaudio.save(song_out_dir / "target_text.wav", target_stem_text, 44100)
-        torchaudio.save(song_out_dir / "others_text.wav", sum_others_text, 44100)
+            torchaudio.save(song_out_dir / "target_text.wav", target_stem_text, 44100)
+            torchaudio.save(song_out_dir / "others_text.wav", sum_others_text, 44100)
             
         metrics["song"] = song_name
         all_metrics.append(metrics)
