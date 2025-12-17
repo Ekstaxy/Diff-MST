@@ -17,6 +17,7 @@ import pyloudnorm as pyln
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from mst.utils import load_diffmst, run_diffmst
+from mst.loss import AudioFeatureLoss
 import eval_metric
 
 # CLAP import removed to match eval_loop.py behavior
@@ -185,6 +186,9 @@ def main():
     
     meter = pyln.Meter(44100)
     
+    # Initialize AudioFeatureLoss
+    af_loss_fn = AudioFeatureLoss([0.1, 0.001, 1.0, 1.0, 0.1], 44100, use_clap=False)
+
     all_metrics = []
     
     for song_idx, song_rel_path in enumerate(tqdm(selected_songs)):
@@ -360,6 +364,17 @@ def main():
         metrics.update(compute_audio_metrics(target_stem_text, "target_text_modified"))
         metrics.update(compute_audio_metrics(sum_others_base, "others_audio_base"))
         metrics.update(compute_audio_metrics(sum_others_text, "others_text_modified"))
+
+        # Compute AF Loss
+        # pred_mix_base: (1, 2, len)
+        # ref_slice: (1, 2, len)
+        af_losses_base = af_loss_fn(pred_mix_base, ref_slice)
+        af_losses_text = af_loss_fn(pred_mix_text, ref_slice)
+
+        for k, v in af_losses_base.items():
+            metrics[f"AF_base_{k}"] = v.item()
+        for k, v in af_losses_text.items():
+            metrics[f"AF_text_{k}"] = v.item()
 
         # --- Loudness Normalization ---
         # Normalize mixes to target LUFS

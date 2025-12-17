@@ -9,7 +9,7 @@ from mst.filter import barkscale_fbanks
 from mst.modules import CLAPEncoder
 
 clap_model = laion_clap.CLAP_Module(enable_fusion=False, amodel="HTSAT-base")
-clap_model.load_ckpt("/mnt/gestalt/home/rakec/checkpoint/CLAP/music_audioset_epoch_15_esc_90.14.pt")
+clap_model.load_ckpt("/mnt/gestalt/home/rakec/checkpoint/CLAP/music_audioset_epoch_15_esc_90.14.pt", verbose=False)
 clap_model = clap_model
 
 def compute_mid_side(x: torch.Tensor):
