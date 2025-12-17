@@ -115,7 +115,7 @@ def compute_audio_metrics(waveform, name_suffix):
     # waveform: (2, len) -> mix to mono for metrics
     # mono = waveform.mean(dim=0).numpy()
     return {
-        f"loudness_{name_suffix}": eval_metric.get_loudness(waveform.mean(dim=0).numpy()),
+        f"loudness_{name_suffix}": eval_metric.get_loudness(waveform.numpy()),
         f"panning_{name_suffix}": eval_metric.get_panning(waveform.numpy()),
         f"mid_side_ratio_{name_suffix}": eval_metric.get_mid_side_ratio(waveform.numpy()),
         f"spectral_centroid_{name_suffix}": eval_metric.get_spectral_centroid(waveform.mean(dim=0).numpy()),

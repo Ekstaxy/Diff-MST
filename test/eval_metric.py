@@ -6,6 +6,7 @@ import glob
 import csv
 import matplotlib.pyplot as plt
 import librosa.display
+import pyloudnorm as pyln
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Do evaluation of mixing metrics')
@@ -152,36 +153,31 @@ def get_loudness(waveform, sr=44100):
     """
     Compute the loudness of the waveform using ITU-R BS.1770-4 standard.
     Args:
-        waveform (np.ndarray): Audio waveform of dimension (Channels, time)
+        waveform (np.ndarray): Audio waveform of dimension (Channels, time) or (time,)
     Returns:
         float: Loudness in LUFS
     """
+    meter = pyln.Meter(sr)
+    
+    # Ensure (time, channels) for pyloudnorm
     if waveform.ndim == 1:
-        waveform = waveform[np.newaxis, :]
+        # (time,) -> (time, 1)
+        data = waveform[:, np.newaxis]
+    elif waveform.ndim == 2:
+        if waveform.shape[0] < waveform.shape[1]: # Assume (Channels, time)
+            data = waveform.transpose()
+        else:
+            data = waveform
+    else:
+        raise ValueError("Waveform must be 1D or 2D")
         
-    loudness_values = []
-    for y in waveform:
-        S = librosa.stft(
-            y,
-            n_fft=2048,
-            win_length=2048,
-            hop_length=512,
-            window="hann"
-        )
-        S_db = librosa.amplitude_to_db(np.abs(S), ref=np.max)
+    try:
+        loudness = meter.integrated_loudness(data)
+    except ValueError:
+        # Handle silence or too short audio
+        loudness = -float('inf')
         
-        # K-weighting filter
-        f = librosa.fft_frequencies(sr=sr, n_fft=2048)
-        K_weighting = 10**(0.691 + 20 * np.log10(f / 1000) - 0.5 * (f / 1000)**2)
-        K_weighting[f < 20] = 0
-        
-        S_db_weighted = S_db * K_weighting[:, np.newaxis]
-        
-        # Integrated loudness
-        loudness = np.mean(S_db_weighted)
-        loudness_values.append(loudness)
-        
-    return np.mean(loudness_values)
+    return loudness
 
 def plot_spectrum(waveform, sr, filename, output_dir="eval_plots"):
     """
