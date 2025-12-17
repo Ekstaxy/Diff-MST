@@ -117,6 +117,7 @@ class MixStyleTransferModel(torch.nn.Module):
 
                 track_idx = track_idx if track_idx >= 0 else 0
                 num_tracks_mix = mix_embeds.size(1) // 2
+                print(f"track_idx: {track_idx}, num_tracks_mix: {num_tracks_mix}")
 
                 for i in range(2):
                     mix_embeds_selected = mix_embeds[0, track_idx + i * num_tracks_mix, :]  # select the embed for the specified track
