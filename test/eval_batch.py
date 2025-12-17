@@ -330,6 +330,18 @@ def main():
             )
             (pred_mix_text, pred_tracks_text, _, _, _) = res_text
 
+        # Baseline
+        target_stem_base = pred_tracks_base[0, :, target_idx, :] # (2, len)
+        other_stems_base = pred_tracks_base[0].clone()
+        other_stems_base[:, target_idx, :] = 0
+        sum_others_base = other_stems_base.sum(dim=1) # (2, len)
+        
+        # Text
+        target_stem_text = pred_tracks_text[0, :, target_idx, :]
+        other_stems_text = pred_tracks_text[0].clone()
+        other_stems_text[:, target_idx, :] = 0
+        sum_others_text = other_stems_text.sum(dim=1)
+
         # --- Compute Metrics ---
         # Audio Metrics (Spectral Centroid, Band Ratio, Crest Factor)
         # We compare Target Track (Base vs Text) and Others (Base vs Text)
@@ -353,25 +365,12 @@ def main():
         torchaudio.save(song_out_dir / "mix_baseline.wav", pred_mix_base.squeeze(0), 44100)
         torchaudio.save(song_out_dir / "mix_text.wav", pred_mix_text.squeeze(0), 44100)
         
-        # Save Stems (Target and Sum of Others)
-        # Baseline
-        target_stem_base = pred_tracks_base[0, :, target_idx, :] # (2, len)
-        other_stems_base = pred_tracks_base[0].clone()
-        other_stems_base[:, target_idx, :] = 0
-        sum_others_base = other_stems_base.sum(dim=1) # (2, len)
-        
         # Normalize stems for audibility (Note: this changes relative mix balance in the saved file)
         target_stem_base = normalize_stem(target_stem_base, args.target_lufs, meter, "target_base")
         sum_others_base = normalize_stem(sum_others_base, args.target_lufs, meter, "others_base")
 
         torchaudio.save(song_out_dir / "target_baseline.wav", target_stem_base, 44100)
         torchaudio.save(song_out_dir / "others_baseline.wav", sum_others_base, 44100)
-        
-        # Text
-        target_stem_text = pred_tracks_text[0, :, target_idx, :]
-        other_stems_text = pred_tracks_text[0].clone()
-        other_stems_text[:, target_idx, :] = 0
-        sum_others_text = other_stems_text.sum(dim=1)
         
         target_stem_text = normalize_stem(target_stem_text, args.target_lufs, meter, "target_text")
         sum_others_text = normalize_stem(sum_others_text, args.target_lufs, meter, "others_text")
