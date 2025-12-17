@@ -246,7 +246,12 @@ def load_diffmst(config_path: str, ckpt_path: str, map_location: str = "cpu"):
         if k.startswith("model.mix_encoder"):
             state_dict[k.replace("model.mix_encoder.", "", 1)] = v
     mix_encoder.load_state_dict(state_dict)
-    text_encoder.load_state_dict(state_dict)
+
+    state_dict = {}
+    for k, v in checkpoint["state_dict"].items():
+        if k.startswith("model.text_encoder"):
+            state_dict[k.replace("model.text_encoder.", "", 1)] = v
+    text_encoder.load_state_dict(state_dict, strict=False)
 
     state_dict = {}
     for k, v in checkpoint["state_dict"].items():
