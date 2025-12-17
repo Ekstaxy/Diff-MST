@@ -20,6 +20,36 @@ from mst.utils import load_diffmst, run_diffmst
 from mst.loss import AudioFeatureLoss
 import eval_metric
 
+def compute_clap_similarity(clap_model, audio, text, original_sr=44100):
+    # audio: (len,) or (channels, len)
+    # text: str
+    
+    # Ensure tensor
+    if not torch.is_tensor(audio):
+        audio = torch.tensor(audio)
+        
+    # Mix to mono if stereo
+    if audio.dim() == 2:
+        audio = audio.mean(dim=0)
+        
+    # Resample to 48k
+    if original_sr != 48000:
+        audio = torchaudio.functional.resample(audio, original_sr, 48000)
+        
+    # CLAP expects (batch, len)
+    audio = audio.unsqueeze(0) # (1, len)
+    
+    # Get embeddings
+    with torch.no_grad():
+        # Ensure model is on same device as audio (or vice versa)
+        # In this script, everything is CPU
+        audio_embed = clap_model.get_audio_embedding_from_data(x=audio, use_tensor=True)
+        text_embed = clap_model.get_text_embedding([text], use_tensor=True)
+        
+        # Cosine similarity
+        similarity = torch.nn.functional.cosine_similarity(audio_embed, text_embed)
+    return similarity.item()
+
 # CLAP import removed to match eval_loop.py behavior
 
 
@@ -437,6 +467,19 @@ def main():
             metrics["AF_text_total"] = sum(af_losses_text.values()).item()
             for k, v in af_losses_text.items():
                 metrics[f"AF_text_{k}"] = v.item()
+
+            # CLAP Similarity
+            # Try to access CLAP model from the loaded model's text_encoder
+            if hasattr(model, 'text_encoder') and hasattr(model.text_encoder, 'model'):
+                clap_model = model.text_encoder.model
+                
+                origin_target = tracks_slice[0, target_idx, :]
+                pred_target = target_stem_text
+                
+                metrics["CLAP_text_target_origin"] = compute_clap_similarity(clap_model, origin_target, args.text_prompt)
+                metrics["CLAP_text_target_pred"] = compute_clap_similarity(clap_model, pred_target, args.text_prompt)
+            else:
+                print("Warning: Could not find CLAP model in text_encoder. Skipping CLAP metrics.")
 
         metrics["AF_sum_total"] = sum(af_losses_sum.values()).item()
         for k, v in af_losses_sum.items():
