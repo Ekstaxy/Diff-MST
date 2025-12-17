@@ -411,7 +411,7 @@ def main():
         metrics = {}
         metrics.update(compute_audio_metrics(target_stem_base, "target_audio_base"))
         metrics.update(compute_audio_metrics(sum_others_base, "others_audio_base"))
-        
+
         if args.num_iterations > 0:
             metrics.update(compute_audio_metrics(target_stem_text, "target_text_modified"))
             metrics.update(compute_audio_metrics(sum_others_text, "others_text_modified"))
@@ -426,7 +426,7 @@ def main():
 
         for k, v in af_losses_base.items():
             metrics[f"AF_base_{k}"] = v.item()
-        if args.num_iterations > 1:
+        if args.num_iterations > 0:
             for k, v in af_losses_text.items():
                 metrics[f"AF_text_{k}"] = v.item()
         for k, v in af_losses_sum.items():
