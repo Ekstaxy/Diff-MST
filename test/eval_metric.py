@@ -103,6 +103,86 @@ def get_crest_factor(waveform):
     
     return np.mean(cf_db)
 
+def get_panning(waveform):
+    """
+    Compute the panning of a stereo waveform.
+    Args:
+        waveform (np.ndarray): Audio waveform of dimension (2, time)
+    Returns:
+        float: Panning value between -1 (left) and 1 (right)
+    """
+    if waveform.ndim != 2 or waveform.shape[0] != 2:
+        raise ValueError("Waveform must be stereo with shape (2, time)")
+    
+    left = waveform[0]
+    right = waveform[1]
+    
+    left_energy = np.sum(left**2)
+    right_energy = np.sum(right**2)
+    
+    panning = (right_energy - left_energy) / (right_energy + left_energy + 1e-8)
+    
+    return panning
+
+def get_mid_side_ratio(waveform):
+    """
+    Compute the Mid/Side energy ratio of a stereo waveform.
+    Args:
+        waveform (np.ndarray): Audio waveform of dimension (2, time)
+    Returns:
+        float: Mid/Side energy ratio
+    """
+    if waveform.ndim != 2 or waveform.shape[0] != 2:
+        raise ValueError("Waveform must be stereo with shape (2, time)")
+    
+    left = waveform[0]
+    right = waveform[1]
+    
+    mid = (left + right) / 2
+    side = (left - right) / 2
+    
+    mid_energy = np.sum(mid**2)
+    side_energy = np.sum(side**2)
+    
+    ratio = mid_energy / (side_energy + 1e-8)
+    
+    return ratio
+
+def get_loudness(waveform, sr=44100):
+    """
+    Compute the loudness of the waveform using ITU-R BS.1770-4 standard.
+    Args:
+        waveform (np.ndarray): Audio waveform of dimension (Channels, time)
+    Returns:
+        float: Loudness in LUFS
+    """
+    if waveform.ndim == 1:
+        waveform = waveform[np.newaxis, :]
+        
+    loudness_values = []
+    for y in waveform:
+        S = librosa.stft(
+            y,
+            n_fft=2048,
+            win_length=2048,
+            hop_length=512,
+            window="hann"
+        )
+        S_db = librosa.amplitude_to_db(np.abs(S), ref=np.max)
+        
+        # K-weighting filter
+        f = librosa.fft_frequencies(sr=sr, n_fft=2048)
+        K_weighting = 10**(0.691 + 20 * np.log10(f / 1000) - 0.5 * (f / 1000)**2)
+        K_weighting[f < 20] = 0
+        
+        S_db_weighted = S_db * K_weighting[:, np.newaxis]
+        
+        # Integrated loudness
+        loudness = np.mean(S_db_weighted)
+        loudness_values.append(loudness)
+        
+    return np.mean(loudness_values)
+
 def plot_spectrum(waveform, sr, filename, output_dir="eval_plots"):
     """
     Plot the average power spectrum of the waveform.

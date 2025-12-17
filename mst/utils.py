@@ -168,7 +168,7 @@ def run_diffmst(
 
     return (
         pred_mix,
-        full_mixed_tracks,
+        pred_mixed_tracks,
         pred_track_param_dict,
         pred_fx_bus_param_dict,
         pred_master_bus_param_dict,

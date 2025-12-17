@@ -44,8 +44,6 @@ def parse_args():
     
     return parser.parse_args()
 
-
-
 def make_serializable(obj):
     if isinstance(obj, dict):
         return {k: make_serializable(v) for k, v in obj.items()}
@@ -115,11 +113,14 @@ def normalize_stem(waveform, target_lufs, meter, name="stem"):
 
 def compute_audio_metrics(waveform, name_suffix):
     # waveform: (2, len) -> mix to mono for metrics
-    mono = waveform.mean(dim=0).numpy()
+    # mono = waveform.mean(dim=0).numpy()
     return {
-        f"spectral_centroid_{name_suffix}": eval_metric.get_spectral_centroid(mono),
-        f"band_ratio_{name_suffix}": eval_metric.get_band_ratio(mono),
-        f"crest_factor_{name_suffix}": eval_metric.get_crest_factor(mono)
+        f"loudness_{name_suffix}": eval_metric.get_loudness(waveform.mean(dim=0).numpy()),
+        f"panning_{name_suffix}": eval_metric.get_panning(waveform.numpy()),
+        f"mid_side_ratio_{name_suffix}": eval_metric.get_mid_side_ratio(waveform.numpy()),
+        f"spectral_centroid_{name_suffix}": eval_metric.get_spectral_centroid(waveform.mean(dim=0).numpy()),
+        f"band_ratio_{name_suffix}": eval_metric.get_band_ratio(waveform.mean(dim=0).numpy()),
+        f"crest_factor_{name_suffix}": eval_metric.get_crest_factor(waveform.mean(dim=0).numpy())
     }
 
 def main():
@@ -327,6 +328,16 @@ def main():
             )
             (pred_mix_text, pred_tracks_text, _, _, _) = res_text
 
+        # --- Compute Metrics ---
+        # Audio Metrics (Spectral Centroid, Band Ratio, Crest Factor)
+        # We compare Target Track (Base vs Text) and Others (Base vs Text)
+
+        metrics = {}
+        metrics.update(compute_audio_metrics(target_stem_base, "target_audio_base"))
+        metrics.update(compute_audio_metrics(target_stem_text, "target_text_modified"))
+        metrics.update(compute_audio_metrics(sum_others_base, "others_audio_base"))
+        metrics.update(compute_audio_metrics(sum_others_text, "others_text_modified"))
+
         # --- Loudness Normalization ---
         # Normalize mixes to target LUFS
         pred_mix_base, pred_tracks_base = normalize_audio(pred_mix_base, pred_tracks_base, args.target_lufs, meter, "baseline")
@@ -365,18 +376,6 @@ def main():
 
         torchaudio.save(song_out_dir / "target_text.wav", target_stem_text, 44100)
         torchaudio.save(song_out_dir / "others_text.wav", sum_others_text, 44100)
-        
-        # --- Compute Metrics ---
-        # Audio Metrics (Spectral Centroid, Band Ratio, Crest Factor)
-        # We compare Target Track (Base vs Text) and Others (Base vs Text)
-
-        metrics = {}
-        metrics.update(compute_audio_metrics(target_stem_base, "target_audio_base"))
-        metrics.update(compute_audio_metrics(target_stem_text, "target_text_modified"))
-        metrics.update(compute_audio_metrics(sum_others_base, "others_audio_base"))
-        metrics.update(compute_audio_metrics(sum_others_text, "others_text_modified"))
-        
-
             
         metrics["song"] = song_name
         all_metrics.append(metrics)
