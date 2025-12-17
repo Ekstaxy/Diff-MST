@@ -46,6 +46,10 @@ def compute_clap_similarity(clap_model, audio, text, original_sr=44100):
         audio_embed = clap_model.get_audio_embedding_from_data(x=audio, use_tensor=True)
         text_embed = clap_model.get_text_embedding([text], use_tensor=True)
         
+        # Normalize embeddings
+        audio_embed = torch.nn.functional.normalize(audio_embed, dim=-1)
+        text_embed = torch.nn.functional.normalize(text_embed, dim=-1)
+        
         # Cosine similarity
         similarity = torch.nn.functional.cosine_similarity(audio_embed, text_embed)
     return similarity.item()
