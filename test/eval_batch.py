@@ -78,6 +78,8 @@ def parse_args():
     parser.add_argument("--exp_name", type=str, default="batch_test", help='Experiment name')
     parser.add_argument("--target_lufs", type=float, default=-22.0, help='Target output LUFS')
     parser.add_argument("--num_iterations", type=int, default=1, help='Number of text prompt iterations')
+    parser.add_argument("--style_alpha", type=float, default=0.5, help='Style interpolation alpha for text prompt')
+    parser.add_argument("--text_alpha", type=float, default=1.0, help='Text interpolation alpha for text prompt')
     
     return parser.parse_args()
 
@@ -380,7 +382,7 @@ def main():
         # track_idx, text_alpha, style_alpha, text_prompt, is_panning = text
         
         if args.num_iterations > 0:
-            text_input = (target_idx, 1.0, 1.0, args.text_prompt, False)
+            text_input = (target_idx, args.text_alpha, args.style_alpha, args.text_prompt, False)
             
             # Initial reference and params from baseline
             current_ref_tracks = pred_tracks_base # (bs, 2, num_tracks, len)
