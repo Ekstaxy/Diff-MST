@@ -96,8 +96,6 @@ model:
       init_args:
         sample_rate: 44100
         stem_separation: false
-        use_clap: false
-        ckpt_path: /mnt/gestalt/home/rakec/checkpoint/CLAP/music_audioset_epoch_15_esc_90.14.pt
         weights: 
           - 0.1 # rms
           - 0.001 # crest factor

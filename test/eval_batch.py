@@ -188,7 +188,7 @@ def main():
     meter = pyln.Meter(44100)
     
     # Initialize AudioFeatureLoss
-    af_loss_fn = AudioFeatureLoss([0.1, 0.001, 1.0, 1.0, 0.1], 44100, use_clap=False)
+    af_loss_fn = AudioFeatureLoss([0.1, 0.001, 1.0, 1.0, 0.1], 44100)
 
     all_metrics = []
     

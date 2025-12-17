@@ -1,16 +1,10 @@
 import yaml
 import torch
 import librosa
-import laion_clap
 import torchaudio
 
 from typing import List, Optional
 from mst.filter import barkscale_fbanks
-from mst.modules import CLAPEncoder
-
-clap_model = laion_clap.CLAP_Module(enable_fusion=False, amodel="HTSAT-base")
-clap_model.load_ckpt("/mnt/gestalt/home/rakec/checkpoint/CLAP/music_audioset_epoch_15_esc_90.14.pt", verbose=False)
-clap_model = clap_model
 
 def compute_mid_side(x: torch.Tensor):
     x_mid = x[:, 0, :] + x[:, 1, :]
@@ -186,37 +180,12 @@ def compute_stereo_imbalance(x: torch.Tensor, **kwargs):
 
     return stereo_imbalance
 
-def compute_clap(x: torch.Tensor, sample_rate, **kwargs):
-    """ Compute CLAP embeddings. 
-
-    Args:
-        x: (bs, 2, seq_len)
-
-    Returns:
-        stereo_imbalance: (bs * 2, embed_dim)
-
-    """
-    clap_model.to(x.device)
-    resampler = torchaudio.transforms.Resample(
-        orig_freq = sample_rate,
-        new_freq = 48000
-    ).to(x.device)
-
-    x = resampler(x)
-
-    x = x.contiguous().reshape(x.shape[0] * 2, -1)  # (bs*2, seq_len)
-    embeds = clap_model.get_audio_embedding_from_data(x = x, use_tensor = True)
-
-    return embeds
- 
 class AudioFeatureLoss(torch.nn.Module):
     def __init__(
         self,
         weights: List[float],
         sample_rate: int,
         stem_separation: bool = False,
-        use_clap: bool = False,
-        ckpt_path: Optional[str] = None
     ) -> None:
         """Compute loss using a set of differentiable audio features.
 
@@ -238,26 +207,14 @@ class AudioFeatureLoss(torch.nn.Module):
         self.stem_separation = stem_separation
         self.sources_list = ["mix"]
         self.source_weights = [1.0]
-        self.use_clap = use_clap
-        self.ckpt_path = ckpt_path
 
-        if self.use_clap:
-            self.transforms = [
-                compute_rms,
-                compute_crest_factor,
-                compute_stereo_width,
-                compute_stereo_imbalance,
-                compute_barkspectrum,
-                compute_clap,
-            ]
-        else:
-            self.transforms = [
-                compute_rms,
-                compute_crest_factor,
-                compute_stereo_width,
-                compute_stereo_imbalance,
-                compute_barkspectrum,
-            ]
+        self.transforms = [
+            compute_rms,
+            compute_crest_factor,
+            compute_stereo_width,
+            compute_stereo_imbalance,
+            compute_barkspectrum,
+        ]
 
         assert len(self.transforms) == len(weights)
 
@@ -293,3 +250,4 @@ class AudioFeatureLoss(torch.nn.Module):
                 losses[key] = weight * val * self.source_weights[stem_idx]
 
         return losses
+

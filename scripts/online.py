@@ -278,7 +278,6 @@ if __name__ == "__main__":
         1.0,  # stereo width
         1.0,  # stereo imbalance
         1.00,  # bark spectrum
-        100.0,  # clap
     ]
 
     if args.loss == "feat":
