@@ -48,6 +48,56 @@ def get_spectral_centroid(waveform, sr=44100):
     
     return np.mean(centroids)
 
+def get_multiband_spectral_centroid(waveform, sr=44100, bands=[250, 4000]):
+    """
+    Compute spectral centroid for Low, Mid, and High bands.
+    Args:
+        waveform (np.ndarray): Audio waveform (Channels, time)
+        bands (list): Split frequencies [low_cutoff, high_cutoff]
+    Returns:
+        dict: {'low': val, 'mid': val, 'high': val}
+    """
+    if waveform.ndim == 1:
+        waveform = waveform[np.newaxis, :]
+    
+    n_fft = 2048
+    hop_length = 512
+    freq_per_bin = sr / n_fft
+    
+    low_cut_bin = int(bands[0] / freq_per_bin)
+    high_cut_bin = int(bands[1] / freq_per_bin)
+    
+    results = {'low': [], 'mid': [], 'high': []}
+    
+    for y in waveform:
+        S = np.abs(librosa.stft(y, n_fft=n_fft, hop_length=hop_length))
+        freqs = librosa.fft_frequencies(sr=sr, n_fft=n_fft)
+        
+        # Helper to compute centroid on a slice
+        def compute_centroid(magnitude_slice, freq_slice):
+            # magnitude_slice: (bins, time)
+            # freq_slice: (bins,)
+            
+            # Sum of (mag * freq) / Sum of mag
+            # Reshape freq to (bins, 1)
+            numerator = np.sum(magnitude_slice * freq_slice[:, np.newaxis], axis=0)
+            denominator = np.sum(magnitude_slice, axis=0)
+            
+            # Avoid div by zero
+            centroid_per_frame = numerator / (denominator + 1e-8)
+            return np.mean(centroid_per_frame)
+
+        # Low Band
+        results['low'].append(compute_centroid(S[:low_cut_bin, :], freqs[:low_cut_bin]))
+        
+        # Mid Band
+        results['mid'].append(compute_centroid(S[low_cut_bin:high_cut_bin, :], freqs[low_cut_bin:high_cut_bin]))
+        
+        # High Band
+        results['high'].append(compute_centroid(S[high_cut_bin:, :], freqs[high_cut_bin:]))
+        
+    return {k: np.mean(v) for k, v in results.items()}
+
 def get_band_ratio(waveform, sr=44100, split_freq=1000):
     """
     Compute the ratio of energy in high frequency bands to low frequency bands.

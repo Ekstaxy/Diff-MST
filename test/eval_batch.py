@@ -153,7 +153,7 @@ def normalize_stem(waveform, target_lufs, meter, name="stem"):
 def compute_audio_metrics(waveform, name_suffix):
     # waveform: (2, len) -> mix to mono for metrics
     # mono = waveform.mean(dim=0).numpy()
-    return {
+    metrics = {
         f"loudness_{name_suffix}": eval_metric.get_loudness(waveform.numpy()),
         f"panning_{name_suffix}": eval_metric.get_panning(waveform.numpy()),
         f"mid_side_ratio_{name_suffix}": eval_metric.get_mid_side_ratio(waveform.numpy()),
@@ -161,6 +161,13 @@ def compute_audio_metrics(waveform, name_suffix):
         f"band_ratio_{name_suffix}": eval_metric.get_band_ratio(waveform.mean(dim=0).numpy()),
         f"crest_factor_{name_suffix}": eval_metric.get_crest_factor(waveform.mean(dim=0).numpy())
     }
+    
+    # Add Multi-band Spectral Centroid
+    mb_centroids = eval_metric.get_multiband_spectral_centroid(waveform.mean(dim=0).numpy())
+    for band, val in mb_centroids.items():
+        metrics[f"sc_{band}_{name_suffix}"] = val
+        
+    return metrics
 
 def main():
     args = parse_args()
