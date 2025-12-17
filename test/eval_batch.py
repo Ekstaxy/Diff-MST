@@ -404,14 +404,16 @@ def main():
             other_stems_text[:, target_idx, :] = 0
             sum_others_text = other_stems_text.sum(dim=1)
 
-            # --- Compute Metrics ---
-            # Audio Metrics (Spectral Centroid, Band Ratio, Crest Factor)
-            # We compare Target Track (Base vs Text) and Others (Base vs Text)
+        # --- Compute Metrics ---
+        # Audio Metrics (Spectral Centroid, Band Ratio, Crest Factor)
+        # We compare Target Track (Base vs Text) and Others (Base vs Text)
 
-            metrics = {}
-            metrics.update(compute_audio_metrics(target_stem_base, "target_audio_base"))
+        metrics = {}
+        metrics.update(compute_audio_metrics(target_stem_base, "target_audio_base"))
+        metrics.update(compute_audio_metrics(sum_others_base, "others_audio_base"))
+        
+        if args.num_iterations > 0:
             metrics.update(compute_audio_metrics(target_stem_text, "target_text_modified"))
-            metrics.update(compute_audio_metrics(sum_others_base, "others_audio_base"))
             metrics.update(compute_audio_metrics(sum_others_text, "others_text_modified"))
 
         # Compute AF Loss
