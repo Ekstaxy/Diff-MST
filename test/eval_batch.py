@@ -302,8 +302,10 @@ def main():
             
         # --- Step 2: Text Prompt on Target Track ---
         # Target track index determined earlier
+
+        # track_idx, text_alpha, style_alpha, text_prompt, is_panning = text
             
-        text_input = (target_idx, 1.0, args.text_prompt)
+        text_input = (target_idx, 1.0, 1.0, args.text_prompt, False)
         
         # Prepare reference for text prompt (use output of baseline)
         # If targeting a track, we need separated tracks as reference
