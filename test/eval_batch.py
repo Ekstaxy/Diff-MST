@@ -428,11 +428,17 @@ def main():
             af_losses_text = af_loss_fn(pred_mix_text, ref_slice)
         af_losses_sum = af_loss_fn(sum_mix, ref_slice)
 
+        # Calculate and log Total AF Loss (sum of all components)
+        metrics["AF_base_total"] = sum(af_losses_base.values()).item()
         for k, v in af_losses_base.items():
             metrics[f"AF_base_{k}"] = v.item()
+
         if args.num_iterations > 0:
+            metrics["AF_text_total"] = sum(af_losses_text.values()).item()
             for k, v in af_losses_text.items():
                 metrics[f"AF_text_{k}"] = v.item()
+
+        metrics["AF_sum_total"] = sum(af_losses_sum.values()).item()
         for k, v in af_losses_sum.items():
             metrics[f"AF_sum_{k}"] = v.item()
 
