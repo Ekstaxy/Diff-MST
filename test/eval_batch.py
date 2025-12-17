@@ -298,6 +298,32 @@ def main():
                 
         tracks_slice = tracks_tensor[..., start_idx : start_idx + slice_len].clone()
         ref_slice = ref_audio[..., start_idx : start_idx + slice_len].clone()
+
+        # --- Select top 8 active tracks ---
+        # Calculate energy of each track in the slice
+        track_energies = tracks_slice.squeeze(0).pow(2).mean(dim=-1) # (num_tracks,)
+        
+        # We must include target_idx
+        selected_indices = [target_idx]
+        
+        # Get indices sorted by energy
+        sorted_indices = torch.argsort(track_energies, descending=True)
+        
+        for idx in sorted_indices:
+            idx = idx.item()
+            if len(selected_indices) >= 8:
+                break
+            if idx not in selected_indices:
+                selected_indices.append(idx)
+        
+        selected_indices.sort()
+        
+        # Update tracks_slice
+        tracks_slice = tracks_slice[:, selected_indices, :]
+        
+        # Update target_idx to new index
+        target_idx = selected_indices.index(target_idx)
+        print(f"Selected {len(selected_indices)} tracks. New target index: {target_idx}")
         
         # --- Step 1: Baseline (Audio Reference Only) ---
         with torch.no_grad():
@@ -362,6 +388,9 @@ def main():
         pred_fx_params = current_fx_params
         pred_master_params = current_master_params
 
+        # --- Sum Mix ---
+        sum_mix = tracks_slice.sum(dim=1, keepdim=True).repeat(1, 2, 1) # (1, 2, len)
+
         # Baseline
         target_stem_base = pred_tracks_base[0, :, target_idx, :] # (2, len)
         other_stems_base = pred_tracks_base[0].clone()
@@ -389,16 +418,22 @@ def main():
         # ref_slice: (1, 2, len)
         af_losses_base = af_loss_fn(pred_mix_base, ref_slice)
         af_losses_text = af_loss_fn(pred_mix_text, ref_slice)
+        af_losses_sum = af_loss_fn(sum_mix, ref_slice)
 
         for k, v in af_losses_base.items():
             metrics[f"AF_base_{k}"] = v.item()
         for k, v in af_losses_text.items():
             metrics[f"AF_text_{k}"] = v.item()
+        for k, v in af_losses_sum.items():
+            metrics[f"AF_sum_{k}"] = v.item()
 
         # --- Loudness Normalization ---
         # Normalize mixes to target LUFS
         pred_mix_base, pred_tracks_base = normalize_audio(pred_mix_base, pred_tracks_base, args.target_lufs, meter, "baseline")
         pred_mix_text, pred_tracks_text = normalize_audio(pred_mix_text, pred_tracks_text, args.target_lufs, meter, "text")
+        
+        dummy_stems_sum = tracks_slice.unsqueeze(1).repeat(1, 2, 1, 1)
+        sum_mix, _ = normalize_audio(sum_mix, dummy_stems_sum, args.target_lufs, meter, "sum")
 
         # --- Save Audio ---
         song_out_dir = output_dir / song_name
@@ -407,6 +442,7 @@ def main():
         # Save Mixes
         torchaudio.save(song_out_dir / "mix_baseline.wav", pred_mix_base.squeeze(0), 44100)
         torchaudio.save(song_out_dir / "mix_text.wav", pred_mix_text.squeeze(0), 44100)
+        torchaudio.save(song_out_dir / "mix_sum.wav", sum_mix.squeeze(0), 44100)
         
         # Normalize stems for audibility (Note: this changes relative mix balance in the saved file)
         target_stem_base = normalize_stem(target_stem_base, args.target_lufs, meter, "target_base")
