@@ -34,7 +34,8 @@ def parse_args():
     parser.add_argument("--dataset_root", type=str, required=True, help='Root directory of the dataset (containing the song folders)')
     
     # Evaluation parameters
-    parser.add_argument("--num_songs", type=int, default=10, help='Number of songs to evaluate')
+    parser.add_argument("--num_songs", type=int, default=1, help='Number of songs to evaluate')
+    parser.add_argument("--seed", type=int, default=42, help='Random seed for reproducibility')
     parser.add_argument("--text_prompt", type=str, default="Bright", help='Text prompt to apply')
     parser.add_argument("--interpolation", type=str, default="linear", help='Interpolation method: linear or slerp')
     parser.add_argument("--target_track_idx", type=int, default=1, help='Track index to apply text prompt to (0-based)')
@@ -125,6 +126,13 @@ def compute_audio_metrics(waveform, name_suffix):
 
 def main():
     args = parse_args()
+    
+    # Set random seed
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
     
     output_dir = pathlib.Path(args.output_dir) / args.exp_name
     output_dir.mkdir(parents=True, exist_ok=True)
