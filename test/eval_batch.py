@@ -174,7 +174,8 @@ def main():
         return
 
     # Randomly select songs
-    selected_songs = random.sample(valid_songs, min(args.num_songs, len(valid_songs)))
+    # selected_songs = random.sample(valid_songs, min(args.num_songs, len(valid_songs)))
+    selected_songs = valid_songs[:args.num_songs]
     
     # Load model
     print("Loading model...")
@@ -252,7 +253,7 @@ def main():
         # eval_loop uses verse/chorus indices. Here we might just use a fixed segment or random.
         # Let's use a segment from the middle to avoid silence.
         start_idx = 0
-        slice_len = 44100 * 20
+        slice_len = 44100 * 10
         
         # Search for a slice where the target track is active
         found_active = False
@@ -284,7 +285,7 @@ def main():
                 print(f"Warning: Could not find active slice for track {target_idx}. Using slice with max energy.")
                 start_idx = best_idx
         
-        # Slice tracks to 20s (same as eval_loop) to avoid OOM
+        # Slice tracks to 10s (same as eval_loop) to avoid OOM
         if start_idx + slice_len > tracks_tensor.shape[-1]:
             start_idx = 0
             if tracks_tensor.shape[-1] < slice_len:
