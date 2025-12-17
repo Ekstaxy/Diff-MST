@@ -63,12 +63,12 @@ model:
         #     joint_embed_shape: 512
         #     pretrained: true
         #     sample_rate: 44100
-        # text_encoder:
-        #   class_path: mst.modules.CLAPTextEncoder
-        #   init_args:
-        #     freeze: true
-        #     ckpt_path: /kaggle/working/music_audioset_epoch_15_esc_90.14.pt
-        #     htsat_base: true
+        text_encoder:
+          class_path: mst.modules.CLAPTextEncoder
+          init_args:
+            freeze: true
+            ckpt_path: /kaggle/working/music_audioset_epoch_15_esc_90.14.pt
+            htsat_base: true
 
         # mix_encoder:
         #   class_path: mst.modules.CLAPEncoder
