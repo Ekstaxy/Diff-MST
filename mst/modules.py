@@ -97,20 +97,30 @@ class MixStyleTransferModel(torch.nn.Module):
 
             # new_emb = factor1 * emb1 + factor2 * emb2
 
+            # Ensure text_embed is a tensor on the correct device
+            if not isinstance(text_embed, torch.Tensor):
+                text_embed = torch.from_numpy(text_embed).to(mix_embeds.device)
+            else:
+                text_embed = text_embed.to(mix_embeds.device)
+            
+            # Normalize text embed to match mix_embeds (which is normalized in SpatialCLAPEncoder)
+            text_embed = F.normalize(text_embed.view(1, -1), dim=-1).squeeze()
+
             for i in range(2):
+                # Safety check for index
+                idx = track_idx + i * num_tracks_mix
+                if idx >= mix_embeds.shape[1]:
+                    continue
+
                 if interpolation == "linear":
-                    mix_embeds_selected = mix_embeds[0, track_idx + i * num_tracks_mix, :] # select the embed for the specified track
-                    mix_embeds[0, track_idx + i * num_tracks_mix, :] = (1 - alpha) * mix_embeds_selected + alpha * text_embed  # linear interpolation
+                    mix_embeds_selected = mix_embeds[0, idx, :] # select the embed for the specified track
+                    mix_embeds[0, idx, :] = (1 - alpha) * mix_embeds_selected + alpha * text_embed  # linear interpolation
                 elif interpolation == "slerp":
-                    mix_embeds_selected = mix_embeds[0, track_idx + i * num_tracks_mix, :] # select the embed for the specified track
+                    mix_embeds_selected = mix_embeds[0, idx, :] # select the embed for the specified track
 
                     # Convert to numpy for slerp
                     v1 = mix_embeds_selected.detach().cpu().numpy().squeeze()
-                    
-                    if isinstance(text_embed, torch.Tensor):
-                        v2 = text_embed.detach().cpu().numpy().squeeze()
-                    else:
-                        v2 = text_embed.squeeze()
+                    v2 = text_embed.detach().cpu().numpy().squeeze()
 
                     v1_norm = v1 / (np.linalg.norm(v1) + 1e-8)
                     v2_norm = v2 / (np.linalg.norm(v2) + 1e-8)
