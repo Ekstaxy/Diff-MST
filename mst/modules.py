@@ -24,6 +24,26 @@ from dasp_pytorch.functional import (
     noise_shaped_reverberation,
 )
 
+def linear_interpolation(emb1: np.ndarray, emb2: np.ndarray, alpha: float) -> np.ndarray:
+    """ Linear interpolation between two embeddings. """
+    return (1 - alpha) * emb1 + alpha * emb2
+
+def spherical_linear_interpolation(emb1: np.ndarray, emb2: np.ndarray, alpha: float) -> np.ndarray:
+    """ Spherical linear interpolation between two embeddings. """
+    emb1_norm = emb1 / np.linalg.norm(emb1)
+    emb2_norm = emb2 / np.linalg.norm(emb2)
+
+    dot_product = np.dot(emb1_norm, emb2_norm)
+    omega = np.arccos(np.clip(dot_product, -1.0, 1.0))
+    sin_omega = np.sin(omega)
+
+    if sin_omega < 1e-6:  # Fall back to linear interpolation
+        return linear_interpolation(emb1, emb2, alpha)
+
+    factor1 = np.sin((1 - alpha) * omega) / sin_omega
+    factor2 = np.sin(alpha * omega) / sin_omega
+
+    return factor1 * emb1 + factor2 * emb2
 
 class MixStyleTransferModel(torch.nn.Module):
     def __init__(
@@ -76,70 +96,31 @@ class MixStyleTransferModel(torch.nn.Module):
 
         # Text optimization
         if text is not None:
-            track_idx, alpha, text_prompt = text
-            text_embed = self.text_encoder(text_prompt) # get the text embed
+            track_idx, text_alpha, style_alpha, text_prompt, is_panning = text
+            left_embed = self.text_encoder(text_prompt[0]).squeeze(0)
+            right_embed = self.text_encoder(text_prompt[1]).squeeze(0)  
 
-            track_idx = track_idx if track_idx >=0 else 0
-            num_tracks_mix = mix_embeds.size(1) // 2
+            if is_panning:
+                text_embed = [
+                    linear_interpolation(left_embed, right_embed, text_alpha),
+                    linear_interpolation(left_embed, right_embed, 1 - text_alpha)
+                ]
 
-            # emb1_norm = emb1 / np.linalg.norm(emb1)
-            # emb2_norm = emb2 / np.linalg.norm(emb2)
+                track_idx = track_idx if track_idx >= 0 else 0
+                num_tracks_mix = mix_embeds.size(1) // 2
 
-            # dot_product = np.dot(emb1_norm, emb2_norm)
-            # omega = np.arccos(np.clip(dot_product, -1.0, 1.0))
-            # sin_omega = np.sin(omega)
-
-            # if sin_omega < 1e-6:  # Fall back to linear interpolation
-            #     return linear_interpolation(emb1, emb2, alpha)
-
-            # factor1 = np.sin((1 - alpha) * omega) / sin_omega
-            # factor2 = np.sin(alpha * omega) / sin_omega
-
-            # new_emb = factor1 * emb1 + factor2 * emb2
-
-            # Ensure text_embed is a tensor on the correct device
-            if not isinstance(text_embed, torch.Tensor):
-                text_embed = torch.from_numpy(text_embed).to(mix_embeds.device)
+                for i in range(2):
+                    mix_embeds_selected = mix_embeds[0, track_idx + i * num_tracks_mix, :]  # select the embed for the specified track
+                    mix_embeds[0, track_idx + i * num_tracks_mix, :] = linear_interpolation(mix_embeds_selected, text_embed[i], style_alpha)
             else:
-                text_embed = text_embed.to(mix_embeds.device)
-            
-            # Normalize text embed to match mix_embeds (which is normalized in SpatialCLAPEncoder)
-            text_embed = F.normalize(text_embed.view(1, -1), dim=-1).squeeze()
+                text_embed = linear_interpolation(left_embed, right_embed, text_alpha)
 
-            for i in range(2):
-                # Safety check for index
-                idx = track_idx + i * num_tracks_mix
-                if idx >= mix_embeds.shape[1]:
-                    continue
+                track_idx = track_idx if track_idx >= 0 else 0
+                num_tracks_mix = mix_embeds.size(1) // 2
 
-                if interpolation == "linear":
-                    mix_embeds_selected = mix_embeds[0, idx, :] # select the embed for the specified track
-                    mix_embeds[0, idx, :] = (1 - alpha) * mix_embeds_selected + alpha * text_embed  # linear interpolation
-                elif interpolation == "slerp":
-                    mix_embeds_selected = mix_embeds[0, idx, :] # select the embed for the specified track
-
-                    # Convert to numpy for slerp
-                    v1 = mix_embeds_selected.detach().cpu().numpy().squeeze()
-                    v2 = text_embed.detach().cpu().numpy().squeeze()
-
-                    v1_norm = v1 / (np.linalg.norm(v1) + 1e-8)
-                    v2_norm = v2 / (np.linalg.norm(v2) + 1e-8)
-
-                    dot_product = np.dot(v1_norm, v2_norm)
-                    omega = np.arccos(np.clip(dot_product, -1.0, 1.0))
-                    sin_omega = np.sin(omega)
-
-                    if sin_omega < 1e-6:  # Fall back to linear interpolation
-                        new_emb = (1 - alpha) * v1 + alpha * v2
-                    else:
-                        factor1 = np.sin((1 - alpha) * omega) / sin_omega
-                        factor2 = np.sin(alpha * omega) / sin_omega
-
-                        new_emb = factor1 * v1 + factor2 * v2
-                    
-                    mix_embeds[0, track_idx + i * num_tracks_mix, :] = torch.from_numpy(new_emb).to(mix_embeds.device)
-                else:
-                    raise ValueError(f"Unknown interpolation method: {interpolation}")
+                for i in range(2):
+                    mix_embeds_selected = mix_embeds[0, track_idx + i * num_tracks_mix, :]  # select the embed for the specified track
+                    mix_embeds[0, track_idx + i * num_tracks_mix, :] = linear_interpolation(mix_embeds_selected, text_embed, style_alpha)
 
         # controller will predict mix parameters for each stem based on embeds
         track_params, fx_bus_params, master_bus_params = self.controller(

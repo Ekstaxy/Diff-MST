@@ -1,24 +1,16 @@
 import yaml
 import torch
 import librosa
+import laion_clap
+import torchaudio
 
-from typing import List
+from typing import List, Optional
 from mst.filter import barkscale_fbanks
+from mst.modules import CLAPEncoder
 
-
-def compute_mid_side(x: torch.Tensor):
-    x_mid = x[:, 0, :] + x[:, 1, :]
-    x_side = x[:, 0, :] - x[:, 1, :]
-    return x_mid, x_side
-
-
-from mst.filter import barkscale_fbanks
-
-import yaml
-from mst.fx_encoder import FXencoder
-
-from mst.modules import SpectrogramEncoder
-
+clap_model = laion_clap.CLAP_Module(enable_fusion=False, amodel="HTSAT-base")
+clap_model.load_ckpt("/mnt/gestalt/home/rakec/checkpoint/CLAP/music_audioset_epoch_15_esc_90.14.pt")
+clap_model = clap_model
 
 def compute_mid_side(x: torch.Tensor):
     x_mid = x[:, 0, :] + x[:, 1, :]
@@ -194,7 +186,29 @@ def compute_stereo_imbalance(x: torch.Tensor, **kwargs):
 
     return stereo_imbalance
 
+def compute_clap(x: torch.Tensor, sample_rate, **kwargs):
+    """ Compute CLAP embeddings. 
 
+    Args:
+        x: (bs, 2, seq_len)
+
+    Returns:
+        stereo_imbalance: (bs * 2, embed_dim)
+
+    """
+    clap_model.to(x.device)
+    resampler = torchaudio.transforms.Resample(
+        orig_freq = sample_rate,
+        new_freq = 48000
+    ).to(x.device)
+
+    x = resampler(x)
+
+    x = x.contiguous().reshape(x.shape[0] * 2, -1)  # (bs*2, seq_len)
+    embeds = clap_model.get_audio_embedding_from_data(x = x, use_tensor = True)
+
+    return embeds
+ 
 class AudioFeatureLoss(torch.nn.Module):
     def __init__(
         self,
@@ -202,6 +216,7 @@ class AudioFeatureLoss(torch.nn.Module):
         sample_rate: int,
         stem_separation: bool = False,
         use_clap: bool = False,
+        ckpt_path: Optional[str] = None
     ) -> None:
         """Compute loss using a set of differentiable audio features.
 
@@ -224,14 +239,25 @@ class AudioFeatureLoss(torch.nn.Module):
         self.sources_list = ["mix"]
         self.source_weights = [1.0]
         self.use_clap = use_clap
+        self.ckpt_path = ckpt_path
 
-        self.transforms = [
-            compute_rms,
-            compute_crest_factor,
-            compute_stereo_width,
-            compute_stereo_imbalance,
-            compute_barkspectrum,
-        ]
+        if self.use_clap:
+            self.transforms = [
+                compute_rms,
+                compute_crest_factor,
+                compute_stereo_width,
+                compute_stereo_imbalance,
+                compute_barkspectrum,
+                compute_clap,
+            ]
+        else:
+            self.transforms = [
+                compute_rms,
+                compute_crest_factor,
+                compute_stereo_width,
+                compute_stereo_imbalance,
+                compute_barkspectrum,
+            ]
 
         assert len(self.transforms) == len(weights)
 
@@ -254,7 +280,16 @@ class AudioFeatureLoss(torch.nn.Module):
                 key = f"{self.sources_list[stem_idx]}-{transform_name}"
                 input_transform = transform(input_stem, sample_rate=self.sample_rate)
                 target_transform = transform(target_stem, sample_rate=self.sample_rate)
-                val = torch.nn.functional.mse_loss(input_transform, target_transform)
+                if transform_name == "clap":
+                    # use cosine similarity loss for CLAP embeddings
+                    val = []
+                    for b_idx in range(input_transform.shape[0]):
+                        input_norm = input_transform[b_idx] / torch.norm(input_transform[b_idx], p=2).clamp(min=1e-8)
+                        target_norm = target_transform[b_idx] / torch.norm(target_transform[b_idx], p=2).clamp(min=1e-8)
+                        val.append(1.0 - torch.dot(input_norm, target_norm).item())
+                    val = torch.tensor(val).type_as(input_transform).mean()
+                else:
+                    val = torch.nn.functional.mse_loss(input_transform, target_transform)
                 losses[key] = weight * val * self.source_weights[stem_idx]
 
         return losses

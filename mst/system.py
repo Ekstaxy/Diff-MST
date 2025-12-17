@@ -121,99 +121,6 @@ class System(pl.LightningModule):
         # split into A and B sections
         middle_idx = tracks.shape[-1] // 2
 
-        # disable parts of the mix console based on global step
-        if self.current_epoch >= self.active_eq_epoch:
-            self.use_track_eq = True
-
-        if self.current_epoch >= self.active_compressor_epoch:
-            self.use_track_compressor = True
-
-        if self.current_epoch >= self.active_fx_bus_epoch:
-            self.use_fx_bus = True
-
-        if self.current_epoch >= self.active_master_bus_epoch:
-            self.use_master_bus = True
-
-        bs, num_tracks, seq_len = tracks.shape
-
-        # apply random gain to input tracks
-        # tracks *= 10 ** ((torch.rand(bs, num_tracks, 1).type_as(tracks) * -12.0) / 20.0)
-        ref_track_param_dict = None
-        ref_fx_bus_param_dict = None
-        ref_master_bus_param_dict = None
-
-        # if tracks[...,middle_idx:].sum() == 0:
-        #     print("tracks are zero")
-        #     print(tracks[...,middle_idx:])
-        #     raise ValueError("input tracks are zero")
-            
-        # --------- create a random mix (on GPU, if applicable) ---------
-        if self.generate_mix:
-            (
-                ref_mix_tracks,  # (bs, 2, num_tracks, seq_len)
-                ref_mix,
-                ref_track_param_dict,
-                ref_fx_bus_param_dict,
-                ref_master_bus_param_dict,
-                ref_mix_params, 
-                ref_fx_bus_params, 
-                ref_master_bus_params
-            ) = self.mix_fn(
-                tracks,
-                self.mix_console,
-                use_track_input_fader=False,  # do not use track input fader for training
-                use_track_panner=self.use_track_panner,
-                use_track_eq=self.use_track_eq,
-                use_track_compressor=self.use_track_compressor,
-                use_fx_bus=self.use_fx_bus,
-                use_master_bus=self.use_master_bus,
-                use_output_fader=False,  # not used because we normalize output mixes
-                instrument_id=instrument_id,
-                stereo_id=stereo_info,
-                instrument_number_file=self.instrument_number_lookup,
-                ke_dict=self.knowledge_engineering_dict,
-            )
-
-            # normalize the reference mix
-            ref_mix = batch_stereo_peak_normalize(ref_mix)
-            ref_mix_tracks = batch_stereo_tracks_peak_normalize(ref_mix_tracks)
-
-            if torch.isnan(ref_mix).any():
-                #print(ref_track_param_dict)
-                raise ValueError("Found nan in ref_mix")
-            
-            
-            # if torch.count_nonzero(ref_mix[...,0:middle_idx])< 1:
-            #     print("ref_mix is zero")
-            #     raise ValueError("ref_mix is zero")
-
-            if not self.use_separate_tracks:
-                ref_mix_a = ref_mix[..., :middle_idx]  # this is passed to the model
-            else:
-                ref_mix_a = ref_mix_tracks[..., :middle_idx]  # this is passed to the model
-                bs, ch, num_tracks, seq_len = ref_mix_a.shape
-                ref_mix_a = ref_mix_a.contiguous().reshape(bs, ch * num_tracks, seq_len)  # reshape to (bs, num_tracks*2, seq_len)
-            ref_mix_b = ref_mix[..., middle_idx:]  # this is used for loss computation
-
-        else:
-            # when using a real mix, pass the same mix to model and loss
-            if not self.use_separate_tracks:
-                ref_mix_a = ref_mix
-            else:
-                ref_mix_a = ref_mix_tracks
-                bs, ch, num_tracks, seq_len = ref_mix_a.shape
-                ref_mix_a = ref_mix_a.contiguous().reshape(bs, ch * num_tracks, seq_len)  # reshape to (bs, num_tracks*2, seq_len)
-            ref_mix_b = ref_mix
-        
-        
-
-
-        # tracks_a = tracks[..., :input_middle_idx] # not used currently
-       
-        #print("input tracks: ", tracks[...,middle_idx:])
-        #print("ref_mix: ", ref_mix_a)
-
-
         if self.current_epoch >= self.active_compressor_epoch:
             self.use_track_compressor = True
 
@@ -268,30 +175,74 @@ class System(pl.LightningModule):
             
             if not self.use_separate_tracks:
                 ref_mix_a = ref_mix[..., :middle_idx]  # this is passed to the model
+                ref_mix_b = ref_mix[..., middle_idx:]  # this is used for loss computation
+                tracks_b = tracks[..., middle_idx:]  # this is passed to the model
+
+                (
+                    pred_track_params,
+                    pred_fx_bus_params,
+                    pred_master_bus_params,
+                ) = self.model(tracks_b, ref_mix_a, track_padding_mask=track_padding)
             else:
+                # first pass to get master bus parameters
+                ref_mix_a = ref_mix[..., :middle_idx]  # this is passed to the model
+                ref_mix_b = ref_mix[..., middle_idx:]  # this is used for loss computation
+                tracks_b = tracks[..., middle_idx:]  # this is passed to the model
+
+                (
+                    pred_track_params,
+                    pred_fx_bus_params,
+                    pred_master_bus_params,
+                ) = self.model(tracks_b, ref_mix_a, track_padding_mask=track_padding)
+
+                keep_master_params = pred_master_bus_params
+
+                # second pass to get track and fx bus parameters
                 ref_mix_a = ref_mix_tracks[..., :middle_idx]  # this is passed to the model
                 bs, ch, num_tracks, seq_len = ref_mix_a.shape
                 ref_mix_a = ref_mix_a.contiguous().reshape(bs, ch * num_tracks, seq_len)  # reshape to (bs, num_tracks*2, seq_len)
-            ref_mix_b = ref_mix[..., middle_idx:]  # this is used for loss computation
-            # tracks_a = tracks[..., :input_middle_idx] # not used currently
-            tracks_b = tracks[..., middle_idx:]  # this is passed to the model
+
+                (
+                    pred_track_params,
+                    pred_fx_bus_params,
+                    pred_master_bus_params,
+                ) = self.model(tracks_b, ref_mix_a, track_padding_mask=track_padding)
+
+                pred_master_bus_params = keep_master_params
         else:
             # when using a real mix, pass the same mix to model and loss
             if not self.use_separate_tracks:
                 ref_mix_a = ref_mix
+                ref_mix_b = ref_mix
+                tracks_b = tracks
+
+                (
+                    pred_track_params,
+                    pred_fx_bus_params,
+                    pred_master_bus_params,
+                ) = self.model(tracks_b, ref_mix_a, track_padding_mask=track_padding)
             else:
+                ref_mix_a = ref_mix
+                ref_mix_b = ref_mix
+                tracks_b = tracks
+
+                (
+                    pred_track_params,
+                    pred_fx_bus_params,
+                    pred_master_bus_params,
+                ) = self.model(tracks_b, ref_mix_a, track_padding_mask=track_padding)
+
                 ref_mix_a = ref_mix_tracks
                 bs, ch, num_tracks, seq_len = ref_mix_a.shape
                 ref_mix_a = ref_mix_a.contiguous().reshape(bs, ch * num_tracks, seq_len)  # reshape to (bs, num_tracks*2, seq_len)
-            ref_mix_b = ref_mix
-            tracks_b = tracks
 
-        #  ---- run model with tracks from section A using reference mix from section B ----
-        (
-            pred_track_params,
-            pred_fx_bus_params,
-            pred_master_bus_params,
-        ) = self.model(tracks_b, ref_mix_a, track_padding_mask=track_padding)
+                (
+                    pred_track_params,
+                    pred_fx_bus_params,
+                    pred_master_bus_params,
+                ) = self.model(tracks_b, ref_mix_a, track_padding_mask=track_padding)
+
+                pred_master_bus_params = keep_master_params
 
         # ------- generate a mix using the predicted mix console parameters -------
         (

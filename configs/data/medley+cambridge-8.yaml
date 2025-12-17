@@ -5,7 +5,7 @@ data:
       - /mnt/gestalt/home/rakec/data/diff-mst
     metadata_files: 
       - ./data/medley.yaml
-    length: 441000   # 10 seconds at 44.1 kHz
+    length: 882000   # 20 seconds at 44.1 kHz
     min_tracks: 8
     max_tracks: 8
     batch_size: 2

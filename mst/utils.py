@@ -91,21 +91,10 @@ def run_diffmst(
     use_master_bus = False
     use_output_fader = True
 
-    analysis_len = 44100 * 20
     meter = pyln.Meter(44100)
 
-    # crop the input tracks and reference mix to the analysis length
-    if tracks.shape[-1] >= analysis_len:
-        analysis_tracks = tracks[
-            ..., track_start_idx : track_start_idx + analysis_len
-        ].clone()
-    else:
-        analysis_tracks = tracks.clone()
-
-    if ref.shape[-1] >= analysis_len:
-        analysis_ref = ref[..., ref_start_idx : ref_start_idx + analysis_len]
-    else:
-        analysis_ref = ref.clone()
+    analysis_tracks = tracks.clone()
+    analysis_ref = ref.clone()
 
     # loudness normalize the tracks to -48 LUFS
     norm_tracks = []
@@ -150,9 +139,6 @@ def run_diffmst(
         if prev_track_param_dict is None:
             assert False, "Previous track parameters must be provided when controlling master bus with text."
         pred_track_params = prev_track_param_dict
-        if prev_fx_bus_param_dict is None:
-            assert False, "Previous fx bus parameters must be provided when controlling master bus with text."
-        pred_fx_bus_params = prev_fx_bus_param_dict
         
     # Track control with text
     elif text is not None and text[0] >= 0:
@@ -160,67 +146,25 @@ def run_diffmst(
             assert False, "Previous master bus parameters must be provided when controlling track with text."
         pred_master_bus_params = prev_master_bus_param_dict
 
-    # ------- generate a mix using the predicted mix console parameters -------
-    # apply with sliding window of 262144 samples with overlap
-    pred_mix = torch.zeros(1, 2, norm_tracks.shape[-1]).to(norm_tracks.device)
-    
-    # Initialize full_mixed_tracks
-    num_tracks = norm_tracks.shape[1]
-    full_mixed_tracks = torch.zeros(1, 2, num_tracks, norm_tracks.shape[-1]).to(norm_tracks.device)
-
-    for i in tqdm(range(0, norm_tracks.shape[-1], analysis_len // 2)):
-        norm_tracks_window = norm_tracks[..., i : i + analysis_len]
-        (
-            pred_mixed_tracks,
-            pred_mix_window,
-            pred_track_param_dict,
-            pred_fx_bus_param_dict,
-            pred_master_bus_param_dict,
-        ) = mix_console(
-            norm_tracks_window,
-            pred_track_params,
-            pred_fx_bus_params,
-            pred_master_bus_params,
-            use_track_input_fader=use_track_input_fader,
-            use_track_panner=use_track_panner,
-            use_track_eq=use_track_eq,
-            use_track_compressor=use_track_compressor,
-            use_fx_bus=use_fx_bus,
-            use_master_bus=use_master_bus,
-            use_output_fader=use_output_fader,
-        )
-        if pred_mix_window.shape[-1] < analysis_len:
-            pred_mix_window = torch.nn.functional.pad(
-                pred_mix_window, (0, analysis_len - pred_mix_window.shape[-1])
-            )
-            # Also pad pred_mixed_tracks
-            pred_mixed_tracks = torch.nn.functional.pad(
-                pred_mixed_tracks, (0, analysis_len - pred_mixed_tracks.shape[-1])
-            )
-
-        window = torch.hann_window(pred_mix_window.shape[-1]).to(pred_mix_window.device)
-        # apply hann window
-        if i == 0:
-            # set the first half of the window to 1
-            window[: window.shape[-1] // 2] = 1.0
-
-        pred_mix_window *= window
-
-        # Apply window to mixed tracks as well
-        # window shape: (seq_len) -> (1, 1, 1, seq_len)
-        window_expanded = window.view(1, 1, 1, -1)
-        pred_mixed_tracks *= window_expanded
-
-        # check length of the mix window
-        output_len = pred_mix[..., i : i + analysis_len].shape[-1]
-
-        # overlap add
-        pred_mix[..., i : i + analysis_len] += pred_mix_window[..., :output_len]
-        full_mixed_tracks[..., i : i + analysis_len] += pred_mixed_tracks[..., :output_len]
-
-    # crop the mix to the original length
-    pred_mix = pred_mix[..., : norm_tracks.shape[-1]]
-    full_mixed_tracks = full_mixed_tracks[..., : norm_tracks.shape[-1]]
+    (
+        pred_mixed_tracks,
+        pred_mix,
+        pred_track_param_dict,
+        pred_fx_bus_param_dict,
+        pred_master_bus_param_dict,
+    ) = mix_console(
+        norm_tracks,
+        pred_track_params,
+        pred_fx_bus_params,
+        pred_master_bus_params,
+        use_track_input_fader=use_track_input_fader,
+        use_track_panner=use_track_panner,
+        use_track_eq=use_track_eq,
+        use_track_compressor=use_track_compressor,
+        use_fx_bus=use_fx_bus,
+        use_master_bus=use_master_bus,
+        use_output_fader=use_output_fader,
+    )
 
     return (
         pred_mix,

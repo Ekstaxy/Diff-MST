@@ -106,3 +106,4 @@ transformers
 torchlibrosa
 pySmartDL
 kaggle
+gradio
