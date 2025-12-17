@@ -43,6 +43,7 @@ def parse_args():
     parser.add_argument("--output_dir", type=str, default="./eval_batch_outputs", help='Directory to save outputs')
     parser.add_argument("--exp_name", type=str, default="batch_test", help='Experiment name')
     parser.add_argument("--target_lufs", type=float, default=-22.0, help='Target output LUFS')
+    parser.add_argument("--num_iterations", type=int, default=1, help='Number of text prompt iterations')
     
     return parser.parse_args()
 
@@ -320,28 +321,46 @@ def main():
             
         text_input = (target_idx, 1.0, 1.0, args.text_prompt, False)
         
-        # Prepare reference for text prompt (use output of baseline)
-        # If targeting a track, we need separated tracks as reference
-        num_tracks = pred_tracks_base.shape[2]
-        # pred_tracks_base is (bs, 2, num_tracks, len) -> view as (bs, 2*num_tracks, len)
-        ref_audio_text = pred_tracks_base.view(1, 2*num_tracks, -1)
+        # Initial reference and params from baseline
+        current_ref_tracks = pred_tracks_base # (bs, 2, num_tracks, len)
+        current_track_params = pred_track_params
+        current_fx_params = pred_fx_params
+        current_master_params = pred_master_params
         
-        with torch.no_grad():
-            res_text = run_diffmst(
-                tracks_slice,
-                ref_audio_text.clone(),
-                model,
-                mix_console,
-                text=text_input,
-                interpolation=args.interpolation,
-                track_start_idx=0,
-                ref_start_idx=0,
-                prev_track_param_dict=pred_track_params,
-                prev_fx_bus_param_dict=pred_fx_params,
-                prev_master_bus_param_dict=pred_master_params,
-                use_master_bus=True
-            )
-            (pred_mix_text, pred_tracks_text, _, _, _) = res_text
+        pred_mix_text = None
+        pred_tracks_text = None
+
+        for i in range(args.num_iterations):
+            # Prepare reference for text prompt
+            # If targeting a track, we need separated tracks as reference
+            num_tracks = current_ref_tracks.shape[2]
+            # current_ref_tracks is (bs, 2, num_tracks, len) -> view as (bs, 2*num_tracks, len)
+            ref_audio_text = current_ref_tracks.view(1, 2*num_tracks, -1)
+            
+            with torch.no_grad():
+                res_text = run_diffmst(
+                    tracks_slice,
+                    ref_audio_text.clone(),
+                    model,
+                    mix_console,
+                    text=text_input,
+                    interpolation=args.interpolation,
+                    track_start_idx=0,
+                    ref_start_idx=0,
+                    prev_track_param_dict=current_track_params,
+                    prev_fx_bus_param_dict=current_fx_params,
+                    prev_master_bus_param_dict=current_master_params,
+                    use_master_bus=True
+                )
+                (pred_mix_text, pred_tracks_text, current_track_params, current_fx_params, current_master_params) = res_text
+            
+            # Update reference for next iteration
+            current_ref_tracks = pred_tracks_text
+
+        # Update params to the final ones for saving
+        pred_track_params = current_track_params
+        pred_fx_params = current_fx_params
+        pred_master_params = current_master_params
 
         # Baseline
         target_stem_base = pred_tracks_base[0, :, target_idx, :] # (2, len)
