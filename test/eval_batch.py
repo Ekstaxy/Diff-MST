@@ -16,7 +16,7 @@ import pyloudnorm as pyln
 # Add parent directory to path to import mst
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from mst.utils import load_diffmst, run_diffmst
+from mst.utils import load_diffmst, run_diffmst, batch_stereo_peak_normalize, batch_stereo_tracks_peak_normalize
 from mst.loss import AudioFeatureLoss
 import eval_metric
 
@@ -409,6 +409,8 @@ def main():
             
             # Initial reference and params from baseline
             current_ref_tracks = pred_tracks_base # (bs, 2, num_tracks, len)
+            current_ref_mix = pred_mix_base # (bs, 2, len)
+            
             current_track_params = pred_track_params
             current_fx_params = pred_fx_params
             current_master_params = pred_master_params
@@ -418,10 +420,14 @@ def main():
 
             for i in range(args.num_iterations):
                 # Prepare reference for text prompt
-                # If targeting a track, we need separated tracks as reference
-                num_tracks = current_ref_tracks.shape[2]
-                # current_ref_tracks is (bs, 2, num_tracks, len) -> view as (bs, 2*num_tracks, len)
-                ref_audio_text = current_ref_tracks.view(1, 2*num_tracks, -1)
+                if is_master_control:
+                    # Use Mix as reference
+                    ref_audio_text = batch_stereo_peak_normalize(current_ref_mix)
+                else:
+                    # Use Tracks as reference
+                    norm_tracks = batch_stereo_tracks_peak_normalize(current_ref_tracks)
+                    bs, chs, num_tracks, seq_len = norm_tracks.shape
+                    ref_audio_text = norm_tracks.view(bs, chs*num_tracks, -1)
                 
                 with torch.no_grad():
                     res_text = run_diffmst(
@@ -442,6 +448,7 @@ def main():
                 
                 # Update reference for next iteration
                 current_ref_tracks = pred_tracks_text
+                current_ref_mix = pred_mix_text
 
             # Update params to the final ones for saving
             pred_track_params = current_track_params
