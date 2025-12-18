@@ -73,7 +73,7 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42, help='Random seed for reproducibility')
     parser.add_argument("--text_prompt", type=str, nargs='+', default=["Bright"], help='Text prompt to apply')
     parser.add_argument("--interpolation", type=str, default="linear", help='Interpolation method: linear or slerp')
-    parser.add_argument("--target_track_idx", type=int, default=1, help='Track index to apply text prompt to (0-based)')
+    parser.add_argument("--target_track_idx", type=int, default=-1, help='Track index to apply text prompt to (0-based)')
     parser.add_argument("--output_dir", type=str, default="./eval_batch_outputs", help='Directory to save outputs')
     parser.add_argument("--exp_name", type=str, default="batch_test", help='Experiment name')
     parser.add_argument("--target_lufs", type=float, default=-22.0, help='Target output LUFS')
@@ -293,9 +293,14 @@ def main():
         
         # Determine target track index early to find active slice
         target_idx = args.target_track_idx
-        if target_idx >= tracks_tensor.shape[1]:
-            print(f"Target track index {target_idx} out of bounds. Using 0.")
-            target_idx = 0
+        
+        # Handle Master Bus (-1)
+        is_master_control = (target_idx == -1)
+
+        if not is_master_control:
+            if target_idx >= tracks_tensor.shape[1]:
+                print(f"Target track index {target_idx} out of bounds. Using 0.")
+                target_idx = 0
 
         # We want to process a segment. Let's pick a random segment or the beginning.
         # eval_loop uses verse/chorus indices. Here we might just use a fixed segment or random.
@@ -317,7 +322,12 @@ def main():
             for try_idx in range(0, scan_end, step):
                 # Check energy of target track in this slice
                 # tracks_tensor: (1, num_tracks, len)
-                target_slice = tracks_tensor[0, target_idx, try_idx : try_idx + slice_len]
+                if is_master_control:
+                    # Use sum of all tracks (mix proxy) for energy check
+                    target_slice = tracks_tensor[0, :, try_idx : try_idx + slice_len].sum(dim=0)
+                else:
+                    target_slice = tracks_tensor[0, target_idx, try_idx : try_idx + slice_len]
+                
                 energy = target_slice.pow(2).mean().item()
                 
                 if energy > 1e-4: # Threshold for "active"
@@ -346,8 +356,10 @@ def main():
         # Calculate energy of each track in the slice
         track_energies = tracks_slice.squeeze(0).pow(2).mean(dim=-1) # (num_tracks,)
         
-        # We must include target_idx
-        selected_indices = [target_idx]
+        # We must include target_idx if it's a specific track
+        selected_indices = []
+        if not is_master_control:
+            selected_indices.append(target_idx)
         
         # Get indices sorted by energy
         sorted_indices = torch.argsort(track_energies, descending=True)
@@ -365,7 +377,11 @@ def main():
         tracks_slice = tracks_slice[:, selected_indices, :]
         
         # Update target_idx to new index
-        target_idx = selected_indices.index(target_idx)
+        if not is_master_control:
+            target_idx = selected_indices.index(target_idx)
+        else:
+            target_idx = -1 # Keep as -1 for master control
+            
         print(f"Selected {len(selected_indices)} tracks. New target index: {target_idx}")
         
         # --- Step 1: Baseline (Audio Reference Only) ---
@@ -439,17 +455,25 @@ def main():
         sum_mix = tracks_slice.sum(dim=1, keepdim=True).repeat(1, 2, 1) # (1, 2, len)
 
         # Baseline
-        target_stem_base = pred_tracks_base[0, :, target_idx, :] # (2, len)
-        other_stems_base = pred_tracks_base[0].clone()
-        other_stems_base[:, target_idx, :] = 0
-        sum_others_base = other_stems_base.sum(dim=1) # (2, len)
+        if is_master_control:
+            target_stem_base = pred_mix_base[0] # (2, len)
+            sum_others_base = torch.zeros_like(target_stem_base)
+        else:
+            target_stem_base = pred_tracks_base[0, :, target_idx, :] # (2, len)
+            other_stems_base = pred_tracks_base[0].clone()
+            other_stems_base[:, target_idx, :] = 0
+            sum_others_base = other_stems_base.sum(dim=1) # (2, len)
         
         if args.num_iterations > 0:
             # Text
-            target_stem_text = pred_tracks_text[0, :, target_idx, :]
-            other_stems_text = pred_tracks_text[0].clone()
-            other_stems_text[:, target_idx, :] = 0
-            sum_others_text = other_stems_text.sum(dim=1)
+            if is_master_control:
+                target_stem_text = pred_mix_text[0]
+                sum_others_text = torch.zeros_like(target_stem_text)
+            else:
+                target_stem_text = pred_tracks_text[0, :, target_idx, :]
+                other_stems_text = pred_tracks_text[0].clone()
+                other_stems_text[:, target_idx, :] = 0
+                sum_others_text = other_stems_text.sum(dim=1)
 
         # --- Compute Metrics ---
         # Audio Metrics (Spectral Centroid, Band Ratio, Crest Factor)
@@ -486,7 +510,12 @@ def main():
             if hasattr(model, 'text_encoder') and hasattr(model.text_encoder, 'model'):
                 clap_model = model.text_encoder.model
                 
-                origin_target = tracks_slice[0, target_idx, :]
+                if is_master_control:
+                    # For master control, compare text with the full mix (sum of tracks)
+                    origin_target = tracks_slice[0].sum(dim=0) # (2, len)
+                else:
+                    origin_target = tracks_slice[0, target_idx, :]
+                
                 pred_target = target_stem_text
                 
                 metrics["CLAP_text_target_origin"] = compute_clap_similarity(clap_model, origin_target, args.text_prompt)
