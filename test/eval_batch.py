@@ -80,6 +80,7 @@ def parse_args():
     parser.add_argument("--num_iterations", type=int, default=1, help='Number of text prompt iterations')
     parser.add_argument("--style_alpha", type=float, default=0.5, help='Style interpolation alpha for text prompt')
     parser.add_argument("--text_alpha", type=float, default=1.0, help='Text interpolation alpha for text prompt')
+    parser.add_argument("--is_panning", type=bool, default=False, help='Whether the text prompt is for panning or not')
     
     return parser.parse_args()
 
@@ -405,7 +406,7 @@ def main():
         # track_idx, text_alpha, style_alpha, text_prompt, is_panning = text
         
         if args.num_iterations > 0:
-            text_input = (target_idx, args.text_alpha, args.style_alpha, args.text_prompt, False)
+            text_input = (target_idx, args.text_alpha, args.style_alpha, args.text_prompt, args.is_panning)
             
             # Initial reference and params from baseline
             current_ref_tracks = pred_tracks_base # (bs, 2, num_tracks, len)
