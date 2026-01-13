@@ -72,12 +72,9 @@ class MixStyleTransferModel(torch.nn.Module):
     ):
         bs, num_tracks, seq_len = tracks.size()
 
-        if ito_modified_embedding is not None:
-            track_embeds = ito_modified_embedding
-        else:
-            # first process the tracks
-            track_embeds = self.track_encoder(tracks.view(bs * num_tracks, 1, -1))
-            track_embeds = track_embeds.view(bs, num_tracks, -1)  # restore
+        # first process the tracks
+        track_embeds = self.track_encoder(tracks.view(bs * num_tracks, 1, -1))
+        track_embeds = track_embeds.view(bs, num_tracks, -1)  # restore
 
         # compute mid/side from the reference mix
         if self.mix_encoder.__class__.__name__ in ["SpatialCLAPEncoder"]:
@@ -98,34 +95,38 @@ class MixStyleTransferModel(torch.nn.Module):
             mix_embeds = self.mix_encoder(ref_mix.view(bs * 2, 1, -1))
             mix_embeds = mix_embeds.view(bs, 2, -1)  # restore
 
-        # Text optimization
-        if text is not None:
-            track_idx, text_alpha, style_alpha, text_prompt, is_panning = text
-            left_embed = self.text_encoder(text_prompt[0]).squeeze(0)
-            right_embed = self.text_encoder(text_prompt[1]).squeeze(0)  
+        # ITO replace text optimization
+        if ito_modified_embedding is not None:
+            mix_embeds = ito_modified_embedding
 
-            if is_panning:
-                text_embed = [
-                    linear_interpolation(left_embed, right_embed, text_alpha),
-                    linear_interpolation(left_embed, right_embed, 1 - text_alpha)
-                ]
+        # # Text optimization
+        # if text is not None:
+        #     track_idx, text_alpha, style_alpha, text_prompt, is_panning = text
+        #     left_embed = self.text_encoder(text_prompt[0]).squeeze(0)
+        #     right_embed = self.text_encoder(text_prompt[1]).squeeze(0)  
 
-                track_idx = track_idx if track_idx >= 0 else 0
-                num_tracks_mix = mix_embeds.size(1) // 2
+        #     if is_panning:
+        #         text_embed = [
+        #             linear_interpolation(left_embed, right_embed, text_alpha),
+        #             linear_interpolation(left_embed, right_embed, 1 - text_alpha)
+        #         ]
 
-                for i in range(2):
-                    mix_embeds_selected = mix_embeds[0, track_idx + i * num_tracks_mix, :]  # select the embed for the specified track
-                    mix_embeds[0, track_idx + i * num_tracks_mix, :] = linear_interpolation(mix_embeds_selected, text_embed[i], style_alpha)
-            else:
-                text_embed = linear_interpolation(left_embed, right_embed, text_alpha)
+        #         track_idx = track_idx if track_idx >= 0 else 0
+        #         num_tracks_mix = mix_embeds.size(1) // 2
 
-                track_idx = track_idx if track_idx >= 0 else 0
-                num_tracks_mix = mix_embeds.size(1) // 2
-                print(f"track_idx: {track_idx}, num_tracks_mix: {num_tracks_mix}")
+        #         for i in range(2):
+        #             mix_embeds_selected = mix_embeds[0, track_idx + i * num_tracks_mix, :]  # select the embed for the specified track
+        #             mix_embeds[0, track_idx + i * num_tracks_mix, :] = linear_interpolation(mix_embeds_selected, text_embed[i], style_alpha)
+        #     else:
+        #         text_embed = linear_interpolation(left_embed, right_embed, text_alpha)
 
-                for i in range(2):
-                    mix_embeds_selected = mix_embeds[0, track_idx + i * num_tracks_mix, :]  # select the embed for the specified track
-                    mix_embeds[0, track_idx + i * num_tracks_mix, :] = linear_interpolation(mix_embeds_selected, text_embed, style_alpha)
+        #         track_idx = track_idx if track_idx >= 0 else 0
+        #         num_tracks_mix = mix_embeds.size(1) // 2
+        #         print(f"track_idx: {track_idx}, num_tracks_mix: {num_tracks_mix}")
+
+        #         for i in range(2):
+        #             mix_embeds_selected = mix_embeds[0, track_idx + i * num_tracks_mix, :]  # select the embed for the specified track
+        #             mix_embeds[0, track_idx + i * num_tracks_mix, :] = linear_interpolation(mix_embeds_selected, text_embed, style_alpha)
         
         # controller will predict mix parameters for each stem based on embeds
         track_params, fx_bus_params, master_bus_params = self.controller(

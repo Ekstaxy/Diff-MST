@@ -270,142 +270,168 @@ def main():
                     stem_filename = f"track_{t_idx}.wav"
                     torchaudio.save(stems_dir / stem_filename, stem_audio, 44100)
                     
-        # Text Control
-        elif c_type == "text":
-            text = args.control_info[c_idx]
-            print(f"[INFO] Using text prompt: {text[2]}, weight: {text[1]}, track: {text[0]}")
+        # # Text Control
+        # elif c_type == "text":
+        #     text = args.control_info[c_idx]
+        #     print(f"[INFO] Using text prompt: {text[2]}, weight: {text[1]}, track: {text[0]}")
             
-            example = {
-                "tracks": args.tracks_path,
-                "track_verse_start_idx": args.track_verse_idx,
-                "track_chorus_start_idx": args.track_chorus_idx,
-                "ref": args.control_info[c_idx],
-                "ref_verse_start_idx": args.ref_verse_idx,
-                "ref_chorus_start_idx": args.ref_chorus_idx
-            }
+        #     example = {
+        #         "tracks": args.tracks_path,
+        #         "track_verse_start_idx": args.track_verse_idx,
+        #         "track_chorus_start_idx": args.track_chorus_idx,
+        #         "ref": args.control_info[c_idx],
+        #         "ref_verse_start_idx": args.ref_verse_idx,
+        #         "ref_chorus_start_idx": args.ref_chorus_idx
+        #     }
 
-            num_tracks = pred_mixed_tracks.shape[2]     # pred_mixed_tracks: (bs, 2, num_tracks, seq_len)
-            if example["ref"][0] < -1 or example["ref"][0] >= num_tracks:
-                raise ValueError(f"Invalid track index {example['ref'][0]} for {num_tracks} tracks.")
+        #     num_tracks = pred_mixed_tracks.shape[2]     # pred_mixed_tracks: (bs, 2, num_tracks, seq_len)
+        #     if example["ref"][0] < -1 or example["ref"][0] >= num_tracks:
+        #         raise ValueError(f"Invalid track index {example['ref'][0]} for {num_tracks} tracks.")
 
-            if example["ref"][0] == -1:
-                ref_audio = pred_mix
-            else:
-                ref_audio = pred_mixed_tracks
-                ref_audio = ref_audio.view(1, 2*num_tracks, -1)
+        #     if example["ref"][0] == -1:
+        #         ref_audio = pred_mix
+        #     else:
+        #         ref_audio = pred_mixed_tracks
+        #         ref_audio = ref_audio.view(1, 2*num_tracks, -1)
 
-            print(f"[INFO] reference audio shape: {ref_audio.shape}")
+        #     print(f"[INFO] reference audio shape: {ref_audio.shape}")
             
-            prev_fx_bus_param_dict = pred_fx_bus_param_dict
-            prev_track_param_dict = pred_track_param_dict
-            prev_master_bus_param_dict = pred_master_bus_param_dict
+        #     prev_fx_bus_param_dict = pred_fx_bus_param_dict
+        #     prev_track_param_dict = pred_track_param_dict
+        #     prev_master_bus_param_dict = pred_master_bus_param_dict
 
-            for song_section in ["verse"]:
-                print(f"[INFO] Mixing {song_section}...")
-                if song_section == "verse":
-                    track_start_idx = example["track_verse_start_idx"]
-                    ref_start_idx = example["ref_verse_start_idx"]
-                else:
-                    track_start_idx = example["track_chorus_start_idx"]
-                    ref_start_idx = example["ref_chorus_start_idx"]
+        #     for song_section in ["verse"]:
+        #         print(f"[INFO] Mixing {song_section}...")
+        #         if song_section == "verse":
+        #             track_start_idx = example["track_verse_start_idx"]
+        #             ref_start_idx = example["ref_verse_start_idx"]
+        #         else:
+        #             track_start_idx = example["track_chorus_start_idx"]
+        #             ref_start_idx = example["ref_chorus_start_idx"]
 
-                if track_start_idx + 44100 * 10 > tracks.shape[-1]:
-                    print(f"[Warning] Tracks too short for this section.")
-                if ref_start_idx + 44100 * 10 > ref_audio.shape[-1]:
-                    print(f"[Warning] Reference too short for this section.")
-
-
-                method_name = "diffmst"
-                method = methods[method_name]
-                print(f"[INFO] Applying method: {method_name}")
+        #         if track_start_idx + 44100 * 10 > tracks.shape[-1]:
+        #             print(f"[Warning] Tracks too short for this section.")
+        #         if ref_start_idx + 44100 * 10 > ref_audio.shape[-1]:
+        #             print(f"[Warning] Reference too short for this section.")
 
 
-                model, mix_console = method["model"]
-                model = model.to("cpu") if model is not None else None
-                mix_console = mix_console.to("cpu") if mix_console is not None else None
-                func = method["func"]
+        #         method_name = "diffmst"
+        #         method = methods[method_name]
+        #         print(f"[INFO] Applying method: {method_name}")
+
+
+        #         model, mix_console = method["model"]
+        #         model = model.to("cpu") if model is not None else None
+        #         mix_console = mix_console.to("cpu") if mix_console is not None else None
+        #         func = method["func"]
                 
 
-                with torch.no_grad():
-                    result = func(
-                        mix_tracks.clone(),
-                        ref_audio.clone(),
-                        model,
-                        mix_console,
-                        text=example["ref"],
-                        interpolation="linear",
-                        track_start_idx=track_start_idx,
-                        ref_start_idx=ref_start_idx,
-                        prev_fx_bus_param_dict=prev_fx_bus_param_dict,
-                        prev_master_bus_param_dict=prev_master_bus_param_dict,
-                        prev_track_param_dict=prev_track_param_dict,
-                    )
+        #         with torch.no_grad():
+        #             result = func(
+        #                 mix_tracks.clone(),
+        #                 ref_audio.clone(),
+        #                 model,
+        #                 mix_console,
+        #                 text=example["ref"],
+        #                 interpolation="linear",
+        #                 track_start_idx=track_start_idx,
+        #                 ref_start_idx=ref_start_idx,
+        #                 prev_fx_bus_param_dict=prev_fx_bus_param_dict,
+        #                 prev_master_bus_param_dict=prev_master_bus_param_dict,
+        #                 prev_track_param_dict=prev_track_param_dict,
+        #             )
 
-                    (
-                        pred_mix,
-                        pred_mixed_tracks,
-                        pred_track_param_dict,
-                        pred_fx_bus_param_dict,
-                        pred_master_bus_param_dict,
-                    ) = result
+        #             (
+        #                 pred_mix,
+        #                 pred_mixed_tracks,
+        #                 pred_track_param_dict,
+        #                 pred_fx_bus_param_dict,
+        #                 pred_master_bus_param_dict,
+        #             ) = result
                     
                     
                     
-                    bs, chs, seq_len = pred_mix.shape
+        #             bs, chs, seq_len = pred_mix.shape
 
-                    mix_lufs_db = meter.integrated_loudness(
-                        pred_mix.squeeze(0).permute(1, 0).numpy()
-                    )
-                    lufs_delta_db = target_lufs_db - mix_lufs_db
-                    pred_mix = pred_mix * 10 ** (lufs_delta_db / 20)
+        #             mix_lufs_db = meter.integrated_loudness(
+        #                 pred_mix.squeeze(0).permute(1, 0).numpy()
+        #             )
+        #             lufs_delta_db = target_lufs_db - mix_lufs_db
+        #             pred_mix = pred_mix * 10 ** (lufs_delta_db / 20)
 
-                    mix_filepath = output_dir / f"step{c_idx}-{method_name}-ref={song_section}.wav"
-                    torchaudio.save(mix_filepath, pred_mix.view(chs, -1), 44100)
+        #             mix_filepath = output_dir / f"step{c_idx}-{method_name}-ref={song_section}.wav"
+        #             torchaudio.save(mix_filepath, pred_mix.view(chs, -1), 44100)
 
-                    # Save individual processed stems
-                    stems_dir = output_dir / f"step{c_idx}-{method_name}-ref={song_section}-stems"
-                    stems_dir.mkdir(exist_ok=True)
+        #             # Save individual processed stems
+        #             stems_dir = output_dir / f"step{c_idx}-{method_name}-ref={song_section}-stems"
+        #             stems_dir.mkdir(exist_ok=True)
                     
-                    # Assuming batch size is 1
-                    num_tracks = pred_mixed_tracks.shape[2]
-                    for t_idx in range(num_tracks):
-                        stem_audio = pred_mixed_tracks[0, :, t_idx, :]
-                        stem_filename = f"track_{t_idx}.wav"
-                        torchaudio.save(stems_dir / stem_filename, stem_audio, 44100)
+        #             # Assuming batch size is 1
+        #             num_tracks = pred_mixed_tracks.shape[2]
+        #             for t_idx in range(num_tracks):
+        #                 stem_audio = pred_mixed_tracks[0, :, t_idx, :]
+        #                 stem_filename = f"track_{t_idx}.wav"
+        #                 torchaudio.save(stems_dir / stem_filename, stem_audio, 44100)
 
-                    json_data = {
-                        "step": c_idx,
-                        "type": "text",
-                        "prompt": text[2],
-                        "weight": text[1],
-                        "target_track": text[0],
-                        "section": song_section,
-                        "prev_param": {
-                            "tracks": make_serializable(prev_track_param_dict),
-                            "fx_bus": make_serializable(prev_fx_bus_param_dict),
-                            "master_bus": make_serializable(prev_master_bus_param_dict)
-                        },
-                        "pred_param": {
-                            "tracks": make_serializable(pred_track_param_dict),
-                            "fx_bus": make_serializable(pred_fx_bus_param_dict),
-                            "master_bus": make_serializable(pred_master_bus_param_dict)
-                        }
-                    }
-                    json_path = output_dir / f"step{c_idx}-{method_name}-ref={song_section}.json"
-                    with open(json_path, 'w') as f:
-                        json.dump(json_data, f, indent=4)
+        #             json_data = {
+        #                 "step": c_idx,
+        #                 "type": "text",
+        #                 "prompt": text[2],
+        #                 "weight": text[1],
+        #                 "target_track": text[0],
+        #                 "section": song_section,
+        #                 "prev_param": {
+        #                     "tracks": make_serializable(prev_track_param_dict),
+        #                     "fx_bus": make_serializable(prev_fx_bus_param_dict),
+        #                     "master_bus": make_serializable(prev_master_bus_param_dict)
+        #                 },
+        #                 "pred_param": {
+        #                     "tracks": make_serializable(pred_track_param_dict),
+        #                     "fx_bus": make_serializable(pred_fx_bus_param_dict),
+        #                     "master_bus": make_serializable(pred_master_bus_param_dict)
+        #                 }
+        #             }
+        #             json_path = output_dir / f"step{c_idx}-{method_name}-ref={song_section}.json"
+        #             with open(json_path, 'w') as f:
+        #                 json.dump(json_data, f, indent=4)
 
         # ITO
         text_info = args.control_info[c_idx]
         prompt_str = text_info[2]
+        track_idx = text_info[0]
+        bs, num_tracks, seq_len = tracks.size()
         print(f"[INFO] Using ITO text prompt: {prompt_str}")
 
         clap_loss_fn = CLAPFeatureLoss()
-        initial_reference_feature = clap_loss_fn.process_text(prompt_str)
+
+        if track_idx >= 0:
+
+            with torch.no_grad():
+
+                full_input = pred_mixed_tracks.clone().view(bs*2, num_tracks, -1)
+                full_base_embedding = model.mix_encoder(full_input)
+                full_base_embedding = full_base_embedding.view(bs, num_tracks, -1)  # restore
+                
+                # 確保基底不需要梯度
+                full_base_embedding = full_base_embedding.detach()
+            
+            num_tracks_mix = full_base_embedding.size(1) // 2
+
+            target_L = full_base_embedding[0, track_idx, :]
+            target_R = full_base_embedding[0, track_idx + num_tracks_mix, :]
+            
+            initial_reference_feature = torch.cat([target_L, target_R], dim=1) 
+
+        else:
+            raise ValueError("For single track ITO, target_track_idx must be >= 0")
+            
         fit_embedding = torch.nn.Parameter(initial_reference_feature, requires_grad=True)
         optimizer = torch.optim.AdamW([fit_embedding], lr=1e-2)
+
         text_encoder = CLAPTextEncoder()
-        bs, num_tracks, seq_len = tracks.size()
+        ito_embedding = full_base_embedding.clone()  
+        ito_embedding[0, track_idx, :] = fit_embedding[0, 0, :]
+        ito_embedding[0, track_idx + num_tracks_mix, :] = fit_embedding[0, 1, :]
         
         min_loss = float('inf')
         min_loss_step = 0
@@ -472,7 +498,7 @@ def main():
                 mix_console,
                 track_start_idx=track_start_idx,
                 ref_start_idx=ref_start_idx,
-                ito_embedding = fit_embedding,
+                ito_embedding = ito_embedding,
             )
 
             (
@@ -485,13 +511,27 @@ def main():
 
             bs, chs, seq_len = pred_mix.shape
 
-            total_clap_loss = clap_loss_fn(pred_mix, prompt_str, sample_rate=44100, distance_fn="cosine")
+            # Select the target track audio and convert to mono
+            target_track_audio = pred_mixed_tracks[:, :, track_idx, :]
+            target_track_mono = target_track_audio.mean(dim=1, keepdim=True)
+
+            total_clap_loss = clap_loss_fn(target_track_mono, prompt_str, sample_rate=44100, distance_fn="cosine")
             total_clap_loss.backward()
             optimizer.step()
 
             if total_clap_loss < min_loss:
                 min_loss = total_clap_loss.item()
                 min_loss_step = ito_step
+
+            full_input = pred_mixed_tracks.contiguous().view(bs * 2, 1, -1)
+            current_embeddings = model.mix_encoder(full_input)
+            # Restore to (BS, 2*NumTracks, Dim) as expected by controller in modules.py
+            current_embeddings = current_embeddings.view(bs, 2, -1) 
+            
+            ito_embedding = current_embeddings.detach()
+
+            ito_embedding[0, track_idx, :] = fit_embedding[0, 0, :]
+            ito_embedding[0, track_idx + num_tracks_mix, :] = fit_embedding[0, 1, :]
 
             mix_lufs_db = meter.integrated_loudness(
                 pred_mix.squeeze(0).permute(1, 0).numpy()
@@ -503,23 +543,32 @@ def main():
                 'step': ito_step + 1,
                 'loss': total_clap_loss.item(),
                 'audio': pred_mix.cpu(),
+                'stems': pred_mixed_tracks.cpu(),
                 'params': pred_track_param_dict,
             })
 
-            mix_filepath = output_dir / f"step{c_idx}-{method_name}-ref={song_section}.wav"
-            torchaudio.save(mix_filepath, pred_mix.view(chs, -1), 44100)
+            # Intermediate saving logic removed to save only best result
 
-            # Save individual processed stems
-            stems_dir = output_dir / f"step{c_idx}-{method_name}-ref={song_section}-stems"
-            stems_dir.mkdir(exist_ok=True)
+        # Save Best Result
+        print(f"[INFO] Best step: {all_results[min_loss_step]['step']}, Loss: {min_loss}")
+        best_result = all_results[min_loss_step]
+        best_mix = best_result['audio']
+        best_stems = best_result['stems']
+        bs, chs, seq_len = best_mix.shape
+        
+        mix_filepath = output_dir / f"step{c_idx}-{method_name}-ref={song_section}-best.wav"
+        torchaudio.save(mix_filepath, best_mix.view(chs, -1), 44100)
+        
+        # Save individual processed stems for the BEST result only
+        stems_dir = output_dir / f"step{c_idx}-{method_name}-ref={song_section}-stems-best"
+        stems_dir.mkdir(exist_ok=True)
             
-            # Assuming batch size is 1
-            print(pred_mixed_tracks.shape)
-            num_tracks = pred_mixed_tracks.shape[2]
-            for t_idx in range(num_tracks):
-                stem_audio = pred_mixed_tracks[0, :, t_idx, :]
-                stem_filename = f"track_{t_idx}.wav"
-                torchaudio.save(stems_dir / stem_filename, stem_audio, 44100)
+        print(best_stems.shape)
+        num_tracks = best_stems.shape[2]
+        for t_idx in range(num_tracks):
+            stem_audio = best_stems[0, :, t_idx, :]
+            stem_filename = f"track_{t_idx}.wav"
+            torchaudio.save(stems_dir / stem_filename, stem_audio, 44100)
 
 if __name__ == "__main__":
     main()

@@ -67,7 +67,7 @@ model:
           class_path: mst.modules.CLAPTextEncoder
           init_args:
             freeze: true
-            ckpt_path: /kaggle/working/music_audioset_epoch_15_esc_90.14.pt
+            ckpt_path: /content/music_audioset_epoch_15_esc_90.14.pt
             htsat_base: true
 
         # mix_encoder:
