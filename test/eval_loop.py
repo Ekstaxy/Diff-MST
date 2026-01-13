@@ -414,8 +414,10 @@ def main():
             
             num_tracks_mix = full_base_embedding.size(1) // 2
 
-            target_L = full_base_embedding[0, track_idx, :]
-            target_R = full_base_embedding[0, track_idx + num_tracks_mix, :]
+            # target_L = full_base_embedding[0, track_idx, :]
+            # target_R = full_base_embedding[0, track_idx + num_tracks_mix, :]
+            target_L = full_base_embedding[0:1, track_idx : track_idx + 1, :]
+            target_R = full_base_embedding[0:1, track_idx + num_tracks_mix : track_idx + num_tracks_mix + 1, :]
             
             initial_reference_feature = torch.cat([target_L, target_R], dim=1) 
 
