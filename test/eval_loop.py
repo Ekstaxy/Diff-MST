@@ -407,12 +407,14 @@ def main():
 
                 full_input = pred_mixed_tracks.clone().view(bs*2, num_tracks, -1)
                 full_base_embedding = model.mix_encoder(full_input)
+                print(f"[INFO] Full base embedding shape (before reshape): {full_base_embedding.shape}")
                 full_base_embedding = full_base_embedding.view(bs, num_tracks, -1)  # restore
+                print(f"[INFO] Full base embedding shape: {full_base_embedding.shape}")
                 
                 # 確保基底不需要梯度
                 full_base_embedding = full_base_embedding.detach()
                 print(f"[INFO] pred_mixed_tracks shape: {pred_mixed_tracks.shape}")
-                print(f"[INFO] Full base embedding shape: {full_base_embedding.shape}")
+                
             
             num_tracks_mix = full_base_embedding.size(1) // 2
 
