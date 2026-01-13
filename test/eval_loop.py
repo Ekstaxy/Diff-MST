@@ -429,9 +429,6 @@ def main():
         print(f"[INFO] Fitting embedding shape: {fit_embedding.shape}")
         optimizer = torch.optim.RAdam([fit_embedding], lr=args.ito_lr)
 
-        if fit_embedding.grad is None:
-            print("!! CRITICAL ERROR: fit_embedding.grad is None. Backprop didn't reach the parameter.")
-
         text_encoder = CLAPTextEncoder()
         ito_embedding = full_base_embedding.clone()  
         ito_embedding[0, track_idx, :] = fit_embedding[0, 0, :]
@@ -447,6 +444,9 @@ def main():
         for ito_step in tqdm.tqdm(range(args.ito_num_step)):
             print(f"[INFO] ITO step {ito_step+1}/{args.ito_num_step}...")
             optimizer.zero_grad()
+
+            if fit_embedding.grad is None:
+                print("!! CRITICAL ERROR: fit_embedding.grad is None. Backprop didn't reach the parameter.")
     
             example = {
                 "tracks": args.tracks_path,
