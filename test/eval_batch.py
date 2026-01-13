@@ -449,8 +449,8 @@ def main():
             
             num_tracks_mix = full_base_embedding.size(1) // 2
             
-            target_L = full_base_embedding[0:1, track_idx : track_idx + 1, :]
-            target_R = full_base_embedding[0:1, track_idx + num_tracks_mix : track_idx + num_tracks_mix + 1, :]
+            target_L = full_base_embedding[0:1, target_idx : target_idx + 1, :]
+            target_R = full_base_embedding[0:1, target_idx + num_tracks_mix : target_idx + num_tracks_mix + 1, :]
             print(f"[INFO] Target L shape: {target_L.shape}, Target R shape: {target_R.shape}")
             
             initial_reference_feature = torch.cat([target_L, target_R], dim=1)
@@ -465,12 +465,12 @@ def main():
             print(f"[INFO] Base embedding shape: {base.shape}")
             
             fit_expanded = torch.zeros_like(base)
-            fit_expanded[0, track_idx, :] = fit_embedding[0, 0, :]
-            fit_expanded[0, track_idx + num_tracks_mix, :] = fit_embedding[0, 1, :]
+            fit_expanded[0, target_idx, :] = fit_embedding[0, 0, :]
+            fit_expanded[0, target_idx + num_tracks_mix, :] = fit_embedding[0, 1, :]
             
             mask = torch.zeros_like(base)
-            mask[0, track_idx, :] = 1.0
-            mask[0, track_idx + num_tracks_mix, :] = 1.0
+            mask[0, target_idx, :] = 1.0
+            mask[0, target_idx + num_tracks_mix, :] = 1.0
             
             ito_embedding = (fit_expanded * mask) + (base * (1 - mask))
             
@@ -594,12 +594,12 @@ def main():
                 next_embeddings = model.mix_encoder(full_input_next)
                 base = next_embeddings.detach()
                 fit_expanded = torch.zeros_like(base)
-                fit_expanded[0, track_idx, :] = fit_embedding[0, 0, :]
-                fit_expanded[0, track_idx + num_tracks_mix, :] = fit_embedding[0, 1, :]
+                fit_expanded[0, target_idx, :] = fit_embedding[0, 0, :]
+                fit_expanded[0, target_idx + num_tracks_mix, :] = fit_embedding[0, 1, :]
                 
                 mask = torch.zeros_like(base)
-                mask[0, track_idx, :] = 1.0
-                mask[0, track_idx + num_tracks_mix, :] = 1.0
+                mask[0, target_idx, :] = 1.0
+                mask[0, target_idx + num_tracks_mix, :] = 1.0
                 
                 ito_embedding = (fit_expanded * mask) + (base * (1 - mask))
         
