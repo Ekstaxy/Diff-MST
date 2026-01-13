@@ -454,9 +454,6 @@ def main():
         for ito_step in tqdm.tqdm(range(args.ito_num_step)):
             print(f"[INFO] ITO step {ito_step+1}/{args.ito_num_step}...")
             optimizer.zero_grad()
-
-            if fit_embedding.grad is None:
-                print("!! CRITICAL ERROR: fit_embedding.grad is None. Backprop didn't reach the parameter.")
     
             example = {
                 "tracks": args.tracks_path,
@@ -535,6 +532,8 @@ def main():
 
             total_clap_loss = clap_loss_fn(target_track_mono, prompt_str, sample_rate=44100, distance_fn="cosine")
             total_clap_loss.backward()
+            if fit_embedding.grad is None:
+                print("!! CRITICAL ERROR: fit_embedding.grad is None. Backprop didn't reach the parameter.")
             optimizer.step()
 
             print(f"[INFO] Step {ito_step+1}, CLAP Loss: {total_clap_loss.item():.4f}")
