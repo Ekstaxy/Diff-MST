@@ -412,6 +412,7 @@ def main():
                 use_master_bus=True
             )
             (pred_mix_base, pred_tracks_base, pred_track_params, pred_fx_params, pred_master_params) = res_baseline
+        print("Baseline inference done.")
             
         # --- Step 2: Text Prompt on Target Track (ITO) ---
         # Target track index determined earlier
@@ -586,6 +587,9 @@ def main():
                         "fx_params": p_fx,
                         "master_params": p_master
                     }
+
+                if ito_step % 5 == 0 or ito_step == args.ito_num_step - 1:
+                    print(f"ITO Step {ito_step+1}/{args.ito_num_step}, CLAP Loss: {loss_val:.4f}, Min Loss: {min_loss:.4f} at step {min_loss_step}")
                     
                     # Note: We do NOT update curr_ref_mix/tracks here.
                     # We keep the reference fixed to the baseline to prevent drift.
