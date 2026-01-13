@@ -259,7 +259,7 @@ class CLAPFeatureLoss(torch.nn.Module):
     def __init__(self, ckpt_path: Optional[str] = None):
         super(CLAPFeatureLoss, self).__init__()
         self.target_sample_rate = 48000  # CLAP expects 48kHz audio
-        self.model = laion_clap.CLAP_Module(enable_fusion=False)
+        self.model = laion_clap.CLAP_Module(enable_fusion=False, amodel="HTSAT-base")
         self.model.load_ckpt(ckpt_path, verbose=False)  # download the default pretrained checkpoint
         self.model.eval()
 
