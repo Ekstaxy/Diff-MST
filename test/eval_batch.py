@@ -487,8 +487,8 @@ def main():
 
                 # Update ito_embedding with current fit_embedding
                 # Index k is L, index k+num_tracks is R
-                ito_embedding[0, target_idx, :] = fit_embedding[0, 0, :]
-                ito_embedding[0, target_idx + num_tracks, :] = fit_embedding[0, 1, :]
+                ito_embedding[:, target_idx, :] = fit_embedding[:, 0, :]
+                ito_embedding[:, target_idx + num_tracks, :] = fit_embedding[:, 1, :]
                 
                 # Prepare Reference Audio
                 if is_master_control:
