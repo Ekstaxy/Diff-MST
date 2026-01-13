@@ -63,17 +63,21 @@ class MixStyleTransferModel(torch.nn.Module):
 
     def forward(
         self,
-        tracks: torch.torch.Tensor,
-        ref_mix: torch.torch.Tensor,
+        tracks: torch.Tensor,
+        ref_mix: torch.Tensor,
         text: Optional[tuple] = None,       
-        interpolation: str = "linear",                                
+        interpolation: str = "linear",               
+        ito_modified_embedding: torch.Tensor = None,          
         track_padding_mask: Optional[torch.Tensor] = None,
     ):
         bs, num_tracks, seq_len = tracks.size()
 
-        # first process the tracks
-        track_embeds = self.track_encoder(tracks.view(bs * num_tracks, 1, -1))
-        track_embeds = track_embeds.view(bs, num_tracks, -1)  # restore
+        if ito_modified_embedding is not None:
+            track_embeds = ito_modified_embedding
+        else:
+            # first process the tracks
+            track_embeds = self.track_encoder(tracks.view(bs * num_tracks, 1, -1))
+            track_embeds = track_embeds.view(bs, num_tracks, -1)  # restore
 
         # compute mid/side from the reference mix
         if self.mix_encoder.__class__.__name__ in ["SpatialCLAPEncoder"]:
@@ -122,7 +126,7 @@ class MixStyleTransferModel(torch.nn.Module):
                 for i in range(2):
                     mix_embeds_selected = mix_embeds[0, track_idx + i * num_tracks_mix, :]  # select the embed for the specified track
                     mix_embeds[0, track_idx + i * num_tracks_mix, :] = linear_interpolation(mix_embeds_selected, text_embed, style_alpha)
-
+        
         # controller will predict mix parameters for each stem based on embeds
         track_params, fx_bus_params, master_bus_params = self.controller(
             track_embeds,

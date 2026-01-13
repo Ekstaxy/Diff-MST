@@ -57,6 +57,7 @@ def run_diffmst(
     interpolation: str = "linear",
     track_start_idx: int = 0,
     ref_start_idx: int = 0,
+    ito_embedding: torch.Tensor = None,
     prev_fx_bus_param_dict: Optional[dict] = None,
     prev_master_bus_param_dict: Optional[dict] = None,
     prev_track_param_dict: Optional[dict] = None,

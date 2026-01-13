@@ -1,7 +1,9 @@
 import yaml
 import torch
+import torch.nn.functional as F
 import librosa
 import torchaudio
+import laion_clap
 
 from typing import List, Optional
 from mst.filter import barkscale_fbanks
@@ -251,3 +253,70 @@ class AudioFeatureLoss(torch.nn.Module):
 
         return losses
 
+# CLAP feature loss
+# The input audio shape should be (N, Channel, Time)
+class CLAPFeatureLoss(torch.nn.Module):
+    def __init__(self):
+        super(CLAPFeatureLoss, self).__init__()
+        self.target_sample_rate = 48000  # CLAP expects 48kHz audio
+        self.model = laion_clap.CLAP_Module(enable_fusion=False)
+        self.model.load_ckpt()  # download the default pretrained checkpoint
+        self.model.eval()
+
+    def forward(self, input_audio, target, sample_rate, distance_fn='cosine'):
+        # Process input audio
+        input_embed = self.process_audio(input_audio, sample_rate)
+
+        # Process target (audio or text)
+        if isinstance(target, torch.Tensor):
+            target_embed = self.process_audio(target, sample_rate)
+        elif isinstance(target, str) or (isinstance(target, list) and isinstance(target[0], str)):
+            target_embed = self.process_text(target)
+        else:
+            raise ValueError("Target must be either audio tensor or text (string or list of strings)")
+
+        # Compute loss using the specified distance function
+        loss = self.compute_distance(input_embed, target_embed, distance_fn)
+
+        return loss
+
+    def process_audio(self, audio, sample_rate):
+        # Ensure input is in the correct shape (N, C, T)
+        if audio.dim() == 2:
+            audio = audio.unsqueeze(1)
+
+        # Convert to mono if stereo
+        if audio.shape[1] > 1:
+            audio = audio.mean(dim=1, keepdim=True)
+        # Resample if necessary
+        if sample_rate != self.target_sample_rate:
+            audio = self.resample(audio, sample_rate)
+        audio = audio.squeeze(1)
+        
+        # Get CLAP embeddings
+        embed = self.model.get_audio_embedding_from_data(x=audio, use_tensor=True)
+        return embed
+
+    def process_text(self, text):
+        # Get CLAP embeddings for text
+        # ensure input is a list of strings
+        if not isinstance(text, list):
+            text = [text]
+        embed = self.model.get_text_embedding(text, use_tensor=True)
+        return embed
+
+    def compute_distance(self, x, y, distance_fn):
+        if distance_fn == 'mse':
+            return F.mse_loss(x, y)
+        elif distance_fn == 'l1':
+            return F.l1_loss(x, y)
+        elif distance_fn == 'cosine':
+            return 1 - F.cosine_similarity(x, y).mean()
+        else:
+            raise ValueError(f"Unsupported distance function: {distance_fn}")
+
+    def resample(self, audio, input_sample_rate):
+        resampler = torchaudio.transforms.Resample(
+            orig_freq=input_sample_rate, new_freq=self.target_sample_rate
+        ).to(audio.device)
+        return resampler(audio)
