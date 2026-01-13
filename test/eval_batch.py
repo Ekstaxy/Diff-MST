@@ -85,6 +85,7 @@ def parse_args():
     
     # ITO Parameters
     parser.add_argument("--ito_num_step", type=int, default=50, help='Number of ITO steps')
+    parser.add_argument("--ito_lr", type=float, default=2e-4, help='Learning rate for ITO optimization')
     parser.add_argument("--clap_checkpoint", type=str, default=None, help='Path to CLAP model checkpoint')
     
     return parser.parse_args()
@@ -448,33 +449,13 @@ def main():
             
             num_tracks_mix = full_base_embedding.size(1) // 2
             
-            # Extract target track embeddings
-            # L is at [:, 2*idx, :], R is at [:, 2*idx+1, :] based on view(bs, num_tracks * 2, -1) if interleaved?
-            # Wait, view(bs, num_tracks*2, -1) from (bs, 2, num_tracks, len)
-            # data is [L_t1, L_t2...][R_t1, R_t2...]
-            # if we do view(bs, 2*num_tracks, -1), it becomes [L_t1, L_t2... R_t1, R_t2...] sequence
-            # So L of track k is at index k, R of track k is at index k + num_tracks
-            
-            # Let's double check eval_loop logic again.
-            # eval_loop main:
-            # pred_mixed_tracks: (bs, 2, num_tracks, seq_len)
-            # full_input = pred_mixed_tracks.clone().view(bs*2, num_tracks, -1) -> This intermixes differently
-            # In eval_loop snippet I corrected:
-            # full_input = pred_mixed_tracks.clone().view(bs, num_tracks * 2, -1)
-            # If tensor is contiguous, (bs, 2, num_tracks, len) -> (bs, 2*num_tracks, len)
-            # Ch0: T0, T1, ... Tn
-            # Ch1: T0, T1, ... Tn
-            # Flattening 2 and num_tracks:
-            # It will be T0_L, T1_L..., T0_R, T1_R...
-            # So index k is L, index k+num_tracks is R
-            
-            target_L = full_base_embedding[:, target_idx : target_idx + 1, :]
-            target_R = full_base_embedding[:, target_idx + num_tracks : target_idx + num_tracks + 1, :]
+            target_L = full_base_embedding[0:1, track_idx : track_idx + 1, :]
+            target_R = full_base_embedding[0:1, track_idx + num_tracks_mix : track_idx + num_tracks_mix + 1, :]
             
             initial_reference_feature = torch.cat([target_L, target_R], dim=1)
             
             fit_embedding = torch.nn.Parameter(initial_reference_feature, requires_grad=True)
-            optimizer = torch.optim.RAdam([fit_embedding], lr=2e-4) # Using RAdam as per user preference
+            optimizer = torch.optim.RAdam([fit_embedding], lr=args.ito_lr) # Using RAdam as per user preference
             
             ito_embedding = full_base_embedding.clone()
             
@@ -509,8 +490,8 @@ def main():
 
                 # Update ito_embedding with current fit_embedding
                 # Index k is L, index k+num_tracks is R
-                ito_embedding[:, target_idx, :] = fit_embedding[:, 0, :]
-                ito_embedding[:, target_idx + num_tracks, :] = fit_embedding[:, 1, :]
+                ito_embedding[0, target_idx, :] = fit_embedding[0, 0, :]
+                ito_embedding[0, target_idx + num_tracks, :] = fit_embedding[0, 1, :]
                 
                 # Prepare Reference Audio
                 if is_master_control:
