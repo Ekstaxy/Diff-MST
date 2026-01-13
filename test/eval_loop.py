@@ -457,9 +457,9 @@ def main():
                 raise ValueError(f"Invalid track index {example['ref'][0]} for {num_tracks} tracks.")
 
             if example["ref"][0] == -1:
-                ref_audio = pred_mix
+                ref_audio = pred_mix.detach()
             else:
-                ref_audio = pred_mixed_tracks
+                ref_audio = pred_mixed_tracks.detach()
                 ref_audio = ref_audio.view(1, 2*num_tracks, -1)
 
             print(f"[INFO] reference audio shape: {ref_audio.shape}")
