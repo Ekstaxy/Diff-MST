@@ -552,7 +552,7 @@ def main():
         best_stems = best_result['stems']
         bs, chs, seq_len = best_mix.shape
         
-        mix_filepath = output_dir / f"ito-step{min_loss_step}-{method_name}-best.wav"
+        mix_filepath = output_dir / f"ito-step{min_loss_step+1}-{method_name}-best.wav"
         torchaudio.save(mix_filepath, best_mix.view(chs, -1), 44100)
         
         # Save individual processed stems for the BEST result only
