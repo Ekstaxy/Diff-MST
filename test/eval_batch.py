@@ -429,59 +429,119 @@ def main():
             print(f"Running ITO for {args.ito_num_step} steps on track {target_idx} with prompt '{args.text_prompt[0]}'")
             
             # Prepare for ITO
-            prompt_str = args.text_prompt[0] # Assuming single prompt for now
+            prompt_str = args.text_prompt[0] 
             bs, num_tracks, seq_len = pred_tracks_base.shape[0], pred_tracks_base.shape[2], pred_tracks_base.shape[3]
             
-            # Calculate initial embedding from baseline prediction
+            # --- WHOLE MIX ITO ADJUSTMENT ---
+            # If target_idx == -1 (Master), we want to optimize the MIX embedding, not track embeddings.
+            # But full_base_embedding above is computed from SEPARATE tracks. 
+            # If we want to optimize the mix, we should encode the MIX.
+            
             with torch.no_grad():
-                # pred_tracks_base: (bs, 2, num_tracks, len) -> Need (bs, 2*num_tracks, len) for mix_encoder
-                # But wait, mix_encoder expects (bs, 2*num_tracks, len) OR (bs, 2, len)?
-                # Standard mix_encoder in Diff-MST takes (bs, 2, len) if it's stereo mix, 
-                # but here it is used for separate tracks embedding extraction?
-                # In eval_loop: full_base_embedding = model.mix_encoder(pred_mixed_tracks.clone().view(bs, 2*num_tracks, -1))
-                # Let's verify input shape. pred_tracks_base is (1, 2, num_tracks, len)
-                # We need to reshape to (1, 2*num_tracks, len)
-                
-                full_input = pred_tracks_base.clone().view(bs, num_tracks * 2, -1)
-                full_base_embedding = model.mix_encoder(full_input)
-                # full_base_embedding: (bs, 2*num_tracks, embed_dim)
+                if is_master_control:
+                    # Encode the Master Mix (2 channels)
+                    # Input to mix_encoder: (BS, 2, Len) flattened to (BS, 2, -1)??
+                    # mix_encoder expects (Batch*Channels, 1, Len)? or (Batch, Channels, Len)?
+                    # The code above used `view(bs, num_tracks * 2, -1)` which suggests `(Batch, Channels, Len)` provided as the "input" to mix_encoder is flexible?
+                    
+                    # NOTE: model.mix_encoder usually takes (Batch, Channels, Len) if configured?
+                    # Let's check how it's used in run_diffmst.
+                    # It uses ref.view(bs*2, 1, -1) or something.
+                    
+                    # For Master Control, we want full_base_embedding to have 2 channels (L, R of mix).
+                    # pred_mix_base: (BS, 2, Len).
+                    
+                    # To match mix_encoder expectation for "stereo mix":
+                    # In modules.py: mix_embeds = self.mix_encoder(ref_mix.view(bs * 2, 1, -1))
+                    
+                    mix_input = pred_mix_base.clone().view(bs * 2, 1, -1) 
+                    full_base_embedding = model.mix_encoder(mix_input)
+                    # Output: (BS*2, EmbDim) -> Reshape to (BS, 2, EmbDim)
+                    full_base_embedding = full_base_embedding.view(bs, 2, -1)
+                    
+                    # For consistency with the logic below:
+                    # num_tracks_mix should be 1.
+                    # target_idx for L is 0, for R is 1. (since we remapped -1 to 0 previously but let's be careful)
+                    # We need to set target_idx = 0 for the slicing logic below to work on (BS, 2, EmbDim)
+                    # indices: L=0, R=1. 
+                    # The logic uses: target_idx (L) and target_idx + num_tracks_mix (R).
+                    # If num_tracks_mix = 1, then L=0, R=1. Perfect.
+                    
+                    num_tracks_mix = 1 
+                    effective_target_idx = 0 
+                    
+                else:
+                    # Encode Separate Tracks
+                    full_input = pred_tracks_base.clone().view(bs, num_tracks * 2, -1)
+                    full_base_embedding = model.mix_encoder(full_input)
+                    # full_base_embedding: (bs, 2*num_tracks, embed_dim)
+                    full_base_embedding = full_base_embedding.view(bs, num_tracks * 2, -1)
+                    
+                    num_tracks_mix = num_tracks
+                    effective_target_idx = target_idx
+
                 full_base_embedding = full_base_embedding.detach()
+
+            # target_L = full_base_embedding[0:1, effective_target_idx : effective_target_idx + 1, :]
+            # target_R = full_base_embedding[0:1, effective_target_idx + num_tracks_mix : effective_target_idx + num_tracks_mix + 1, :]
             
-            num_tracks_mix = full_base_embedding.size(1) // 2
+            # Using corrected layout: L is at idx, R is at idx + num_tracks_mix ?
+            # Wait, `full_base_embedding` from mix_encoder(tracks) comes out as (BS, 2*NumTracks, Emb)?
+            # If input is (BS, 2*N, -1), output is (BS, 2*N, Emb).
+            # The previous logic assumed L at `idx` and R at `idx + N`.
+            # Let's verify `mix_encoder` behavior. It processes inputs independently.
+            # If input is `T0_L, T0_R, T1_L, T1_R...` (interleaved)
+            # The output will be in same order.
+            # So L is at `2*idx`, R is at `2*idx+1`.
             
-            target_L = full_base_embedding[0:1, target_idx : target_idx + 1, :]
-            target_R = full_base_embedding[0:1, target_idx + num_tracks_mix : target_idx + num_tracks_mix + 1, :]
+            # BUT, the `full_base_embedding` logic I see in `eval_loop` suggests `idx` and `idx+N`.
+            # (eval_loop line 430: `target_R = ... track_idx + num_tracks_mix`)
+            # This implies `full_base_embedding` is structured [L0..Ln, R0..Rn].
+            # Does `mix_encoder` output that?
+            
+            # If `full_input` was `pred_tracks_base.view(bs, num_tracks * 2, -1)` -> This depends on view.
+            # (BS, 2, N, L) -> view(BS, 2*N, L).
+            # Top-level stride is 2. So it iterates Channel 0 (all tracks), then Channel 1 (all tracks).
+            # So indeed: [L_T0, L_T1 ... L_Tn, R_T0, R_T1 ... R_Tn].
+            # So `idx` is L, `idx + N` is R.
+            # This matches `eval_loop` logic.
+            
+            # FOR MASTER CONTROL:
+            # We created `mix_input` via `pred_mix_base.view(bs * 2, 1, -1)`.
+            # (BS, 2, L) -> view(BS*2, 1, L).
+            # This iterates Channel 0 (L), then Channel 1 (R).
+            # Output is (2, Emb). 0 is L, 1 is R.
+            # `num_tracks_mix` = 1.
+            # L index = 0. R index = 0 + 1 = 1.
+            # This ALSO matches.
+            
+            target_L = full_base_embedding[0:1, effective_target_idx : effective_target_idx + 1, :]
+            target_R = full_base_embedding[0:1, effective_target_idx + num_tracks_mix : effective_target_idx + num_tracks_mix + 1, :]
+            
             print(f"[INFO] Target L shape: {target_L.shape}, Target R shape: {target_R.shape}")
             
             initial_reference_feature = torch.cat([target_L, target_R], dim=1)
             print(f"[INFO] Initial reference feature shape: {initial_reference_feature.shape}")
             
             fit_embedding = torch.nn.Parameter(initial_reference_feature, requires_grad=True)
-            optimizer = torch.optim.RAdam([fit_embedding], lr=args.ito_lr) # Using RAdam as per user preference
+            optimizer = torch.optim.RAdam([fit_embedding], lr=args.ito_lr) 
             print(f"[INFO] Fitting embedding shape: {fit_embedding.shape}")
             
-            # [Corrected] Construct ito_embedding using Masking to ensure gradient flow
-            base = full_base_embedding.clone().detach() # (batch, 2*num_tracks, emb_dim)
+            # [Corrected] Construct ito_embedding using Masking
+            base = full_base_embedding.clone().detach() 
             print(f"[INFO] Base embedding shape: {base.shape}")
             
             fit_expanded = torch.zeros_like(base)
-            fit_expanded[0, target_idx, :] = fit_embedding[0, 0, :]
-            fit_expanded[0, target_idx + num_tracks_mix, :] = fit_embedding[0, 1, :]
+            fit_expanded[0, effective_target_idx, :] = fit_embedding[0, 0, :]
+            fit_expanded[0, effective_target_idx + num_tracks_mix, :] = fit_embedding[0, 1, :]
             
             mask = torch.zeros_like(base)
-            mask[0, target_idx, :] = 1.0
-            mask[0, target_idx + num_tracks_mix, :] = 1.0
+            mask[0, effective_target_idx, :] = 1.0
+            mask[0, effective_target_idx + num_tracks_mix, :] = 1.0
             
             ito_embedding = (fit_expanded * mask) + (base * (1 - mask))
             
-            # Initialize reference for mixing (Audio)
-            # For ITO, usually we use the PREVIOUS step's output as reference? 
-            # Or use the baseline output as static reference?
-            # In eval_loop: 
-            # if example["ref"][0] - 1 (sum mix): ref_audio = pred_mix.detach() 
-            # else: ref_audio = pred_mixed_tracks.detach()
-            # Here we are targeting a track or master.
-            
+            # Initialize reference for mixing 
             curr_ref_mix = pred_mix_base.detach()
             curr_ref_tracks = pred_tracks_base.detach()
             
@@ -498,7 +558,34 @@ def main():
             song_losses = []
             
             for ito_step in range(args.ito_num_step):
+                # ... loop logic uses ito_embedding which is correctly constructed ...
                 optimizer.zero_grad()
+                
+                # Re-construct ito_embedding for gradient flow (Functional)
+                # Since we updated 'fit_embedding' via optimizer, we must rebuild 'ito_embedding' graph
+                base_loop = full_base_embedding.detach() # Always use stable base? or update? 
+                # eval_loop uses `current_embeddings` from previous step output as next base?
+                # "current_embeddings = model.mix_encoder(pred_mixed_tracks...)"
+                
+                # If we want to strictly follow eval_loop logic:
+                # eval_loop UPDATES masking base from `model.mix_encoder(pred_mixed_tracks)`
+                
+                # BUT for Master Control, we should use `pred_mix_ito` to update base?
+                # If we stick to static base, it's safer.
+                # If we want dynamic base:
+                
+                if ito_step > 0:
+                     # Re-encode for dynamic base?
+                     # Let's keep it static for now to match my previous "Memory Safe" logic. 
+                     # (Static base = less drift).
+                     pass
+
+                # Re-apply mask
+                fit_expanded_loop = torch.zeros_like(base_loop)
+                fit_expanded_loop[0, effective_target_idx, :] = fit_embedding[0, 0, :]
+                fit_expanded_loop[0, effective_target_idx + num_tracks_mix, :] = fit_embedding[0, 1, :]
+                 
+                ito_embedding = (fit_expanded_loop * mask) + (base_loop * (1 - mask))
                 
                 # Prepare Reference Audio
                 if is_master_control:
@@ -506,7 +593,6 @@ def main():
                 else:
                     norm_tracks = batch_stereo_tracks_peak_normalize(curr_ref_tracks)
                     bs_ref, chs_ref, num_tracks_ref, len_ref = norm_tracks.shape
-                    # Flatten for run_diffmst
                     ref_audio_input = norm_tracks.view(bs_ref, chs_ref*num_tracks_ref, -1)
                 
                 # Run Model
