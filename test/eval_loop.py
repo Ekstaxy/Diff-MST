@@ -430,9 +430,19 @@ def main():
         optimizer = torch.optim.RAdam([fit_embedding], lr=args.ito_lr)
 
         text_encoder = CLAPTextEncoder()
-        ito_embedding = full_base_embedding.clone()  
-        ito_embedding[0, track_idx, :] = fit_embedding[0, 0, :]
-        ito_embedding[0, track_idx + num_tracks_mix, :] = fit_embedding[0, 1, :]
+        
+        # [Corrected] Construct ito_embedding using Masking to ensure gradient flow
+        base = full_base_embedding.clone().detach() # (batch, 2*num_tracks, emb_dim)
+        
+        fit_expanded = torch.zeros_like(base)
+        fit_expanded[0, track_idx, :] = fit_embedding[0, 0, :]
+        fit_expanded[0, track_idx + num_tracks_mix, :] = fit_embedding[0, 1, :]
+        
+        mask = torch.zeros_like(base)
+        mask[0, track_idx, :] = 1.0
+        mask[0, track_idx + num_tracks_mix, :] = 1.0
+        
+        ito_embedding = (fit_expanded * mask) + (base * (1 - mask))
         print(f"[INFO] Initial ITO embedding shape: {ito_embedding.shape}")
         
         min_loss = float('inf')
@@ -538,9 +548,17 @@ def main():
 
             current_embeddings = model.mix_encoder(pred_mixed_tracks.clone().view(1, 2*num_tracks, -1))
             
-            ito_embedding = current_embeddings.detach()
-            ito_embedding[0, track_idx, :] = fit_embedding[0, 0, :]
-            ito_embedding[0, track_idx + num_tracks_mix, :] = fit_embedding[0, 1, :]
+            # [Corrected] Construct ito_embedding using Masking
+            base = current_embeddings.detach()
+            fit_expanded = torch.zeros_like(base)
+            fit_expanded[0, track_idx, :] = fit_embedding[0, 0, :]
+            fit_expanded[0, track_idx + num_tracks_mix, :] = fit_embedding[0, 1, :]
+            
+            mask = torch.zeros_like(base)
+            mask[0, track_idx, :] = 1.0
+            mask[0, track_idx + num_tracks_mix, :] = 1.0
+            
+            ito_embedding = (fit_expanded * mask) + (base * (1 - mask))
 
             mix_lufs_db = meter.integrated_loudness(
                 pred_mix.clone().detach().squeeze(0).permute(1, 0).numpy()
