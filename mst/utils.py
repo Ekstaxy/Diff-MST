@@ -132,7 +132,7 @@ def run_diffmst(
 
     #  ---- run model to estimate mix parmaeters using analysis audio ----
     pred_track_params, pred_fx_bus_params, pred_master_bus_params = model(
-        norm_analysis_tracks, analysis_ref, text=text, interpolation=interpolation, ito_embedding=ito_embedding
+        norm_analysis_tracks, analysis_ref, text=text, interpolation=interpolation, ito_modified_embedding=ito_embedding
     )
     
     # Master bus control with text
