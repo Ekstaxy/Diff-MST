@@ -444,7 +444,7 @@ def main():
                 "tracks": args.tracks_path,
                 "track_verse_start_idx": args.track_verse_idx,
                 "track_chorus_start_idx": args.track_chorus_idx,
-                "ref": args.control_info[c_idx],
+                "ref": args.control_info[1],
                 "ref_verse_start_idx": args.ref_verse_idx,
                 "ref_chorus_start_idx": args.ref_chorus_idx
             }
