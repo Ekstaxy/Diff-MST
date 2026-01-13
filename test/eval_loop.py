@@ -394,6 +394,7 @@ def main():
         # ITO
         text_info = args.control_info[c_idx]
         prompt_str = text_info[2]
+        print(text_info[0], type(text_info[0]))
         track_idx = int(text_info[0])
         bs, num_tracks, seq_len = tracks.size()
         print(f"[INFO] Using ITO text prompt: {prompt_str}")
