@@ -457,7 +457,18 @@ def main():
             fit_embedding = torch.nn.Parameter(initial_reference_feature, requires_grad=True)
             optimizer = torch.optim.RAdam([fit_embedding], lr=args.ito_lr) # Using RAdam as per user preference
             
-            ito_embedding = full_base_embedding.clone()
+            # [Corrected] Construct ito_embedding using Masking to ensure gradient flow
+            base = full_base_embedding.clone().detach() # (batch, 2*num_tracks, emb_dim)
+            
+            fit_expanded = torch.zeros_like(base)
+            fit_expanded[0, track_idx, :] = fit_embedding[0, 0, :]
+            fit_expanded[0, track_idx + num_tracks_mix, :] = fit_embedding[0, 1, :]
+            
+            mask = torch.zeros_like(base)
+            mask[0, track_idx, :] = 1.0
+            mask[0, track_idx + num_tracks_mix, :] = 1.0
+            
+            ito_embedding = (fit_expanded * mask) + (base * (1 - mask))
             
             # Initialize reference for mixing (Audio)
             # For ITO, usually we use the PREVIOUS step's output as reference? 
@@ -484,20 +495,15 @@ def main():
             
             for ito_step in range(args.ito_num_step):
                 optimizer.zero_grad()
-
-                # Update ito_embedding with current fit_embedding
-                # Index k is L, index k+num_tracks is R
-                ito_embedding[:, target_idx, :] = fit_embedding[:, 0, :]
-                ito_embedding[:, target_idx + num_tracks, :] = fit_embedding[:, 1, :]
                 
                 # Prepare Reference Audio
                 if is_master_control:
-                     ref_audio_input = batch_stereo_peak_normalize(curr_ref_mix)
+                    ref_audio_input = batch_stereo_peak_normalize(curr_ref_mix)
                 else:
-                     norm_tracks = batch_stereo_tracks_peak_normalize(curr_ref_tracks)
-                     bs_ref, chs_ref, num_tracks_ref, len_ref = norm_tracks.shape
-                     # Flatten for run_diffmst
-                     ref_audio_input = norm_tracks.view(bs_ref, chs_ref*num_tracks_ref, -1)
+                    norm_tracks = batch_stereo_tracks_peak_normalize(curr_ref_tracks)
+                    bs_ref, chs_ref, num_tracks_ref, len_ref = norm_tracks.shape
+                    # Flatten for run_diffmst
+                    ref_audio_input = norm_tracks.view(bs_ref, chs_ref*num_tracks_ref, -1)
                 
                 # Run Model
                 # Note: run_diffmst expects ito_embedding (or ito_modified_embedding)
@@ -580,10 +586,18 @@ def main():
                 # ito_embedding = current_embeddings.detach()
                 # ...
                 
-                with torch.no_grad():
-                    full_input_next = pred_tracks_ito.detach().contiguous().view(bs, num_tracks * 2, -1)
-                    next_embeddings = model.mix_encoder(full_input_next)
-                    ito_embedding = next_embeddings.detach()
+                full_input_next = pred_tracks_ito.detach().contiguous().view(bs, num_tracks * 2, -1)
+                next_embeddings = model.mix_encoder(full_input_next)
+                base = next_embeddings.detach()
+                fit_expanded = torch.zeros_like(base)
+                fit_expanded[0, track_idx, :] = fit_embedding[0, 0, :]
+                fit_expanded[0, track_idx + num_tracks_mix, :] = fit_embedding[0, 1, :]
+                
+                mask = torch.zeros_like(base)
+                mask[0, track_idx, :] = 1.0
+                mask[0, track_idx + num_tracks_mix, :] = 1.0
+                
+                ito_embedding = (fit_expanded * mask) + (base * (1 - mask))
         
             all_songs_losses.append(song_losses)
             
