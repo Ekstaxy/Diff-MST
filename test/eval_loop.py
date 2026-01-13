@@ -425,7 +425,7 @@ def main():
             
         fit_embedding = torch.nn.Parameter(initial_reference_feature, requires_grad=True)
         print(f"[INFO] Fitting embedding shape: {fit_embedding.shape}")
-        optimizer = torch.optim.AdamW([fit_embedding], lr=1e-2)
+        optimizer = torch.optim.RAdam([fit_embedding], lr=2e-4)
 
         text_encoder = CLAPTextEncoder()
         ito_embedding = full_base_embedding.clone()  
