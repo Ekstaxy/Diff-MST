@@ -533,7 +533,7 @@ def main():
             ito_embedding[0, track_idx + num_tracks_mix, :] = fit_embedding[0, 1, :]
 
             mix_lufs_db = meter.integrated_loudness(
-                pred_mix.squeeze(0).permute(1, 0).numpy()
+                pred_mix.clone().detach().squeeze(0).permute(1, 0).numpy()
             )
             lufs_delta_db = target_lufs_db - mix_lufs_db
             pred_mix = pred_mix * 10 ** (lufs_delta_db / 20)
