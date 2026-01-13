@@ -516,12 +516,15 @@ def main():
             bs, chs, seq_len = pred_mix.shape
 
             # Select the target track audio and convert to mono
+            print(f"[INFO] pred_mixed_tracks shape: {pred_mixed_tracks.shape}")
             target_track_audio = pred_mixed_tracks[:, :, track_idx, :]
             target_track_mono = target_track_audio.mean(dim=1, keepdim=True)
 
             total_clap_loss = clap_loss_fn(target_track_mono, prompt_str, sample_rate=44100, distance_fn="cosine")
             total_clap_loss.backward()
             optimizer.step()
+
+            print(f"[INFO] Step {ito_step+1}, CLAP Loss: {total_clap_loss.item():.4f}")
 
             if total_clap_loss < min_loss:
                 min_loss = total_clap_loss.item()
