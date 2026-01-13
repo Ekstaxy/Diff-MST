@@ -504,6 +504,9 @@ def main():
             for ito_step in range(args.ito_num_step):
                 optimizer.zero_grad()
                 
+                if fit_embedding.grad is None:
+                    print("!! CRITICAL ERROR: fit_embedding.grad is None. Backprop didn't reach the parameter.")
+
                 # Update ito_embedding with current fit_embedding
                 # Index k is L, index k+num_tracks is R
                 ito_embedding[:, target_idx, :] = fit_embedding[:, 0, :]
@@ -522,18 +525,6 @@ def main():
                 # Note: run_diffmst expects ito_embedding (or ito_modified_embedding)
                 # We need to make sure we call it correctly.
                 # In eval_loop, we passed `ito_embedding=ito_embedding`
-                
-                # We use baseline prev params to start? Or current?
-                # Usually we want to refine parameters.
-                # Let's use current best parameters? Or just let the model predict from scratch based on embedding?
-                # The model predicts delta or absolute?
-                # The controller predicts absolute parameters based on embeddings. 
-                # So we don't strictly *need* prev params unless we want smooth transition or if using text control logic that relies on it.
-                # eval_loop passes prev params. We should probably pass the ones from baseline first, then update?
-                # Actually eval_loop passes them. Let's pass the baseline ones for stability or keep updating?
-                # In eval_loop: 
-                # prev_fx_bus_param_dict = pred_fx_bus_param_dict (from previous step)
-                # So it chains them.
                 
                 if ito_step == 0:
                     prev_t, prev_f, prev_m = pred_track_params, pred_fx_params, pred_master_params
@@ -569,9 +560,17 @@ def main():
                 target_mono = target_audio.mean(dim=1, keepdim=True)
                 
                 loss = clap_loss_fn(target_mono, prompt_str, sample_rate=44100, distance_fn="cosine")
+                if not loss.requires_grad:
+                    print("!! CRITICAL ERROR: Loss does not require grad. computational graph is broken anywhere.")
                 loss.backward()
+                prev_embedding = fit_embedding.clone().detach()
                 optimizer.step()
                 
+                param_change = (fit_embedding - prev_embedding).abs().sum().item()
+                grad_norm = fit_embedding.grad.norm().item() if fit_embedding.grad is not None else 0.0
+                if param_change == 0 and grad_norm > 0:
+                    print("!! WARNING: Parameters did not change despite having gradients. Check learning rate.")
+                    
                 loss_val = loss.item()
                 song_losses.append(loss_val)
                 
@@ -602,10 +601,10 @@ def main():
                 # ...
                 
                 with torch.no_grad():
-                     full_input_next = pred_tracks_ito.detach().contiguous().view(bs, num_tracks * 2, -1)
-                     next_embeddings = model.mix_encoder(full_input_next)
-                     ito_embedding = next_embeddings.detach()
-            
+                    full_input_next = pred_tracks_ito.detach().contiguous().view(bs, num_tracks * 2, -1)
+                    next_embeddings = model.mix_encoder(full_input_next)
+                    ito_embedding = next_embeddings.detach()
+        
             all_songs_losses.append(song_losses)
             
             # Use best results
