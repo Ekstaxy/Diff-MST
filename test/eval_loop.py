@@ -425,12 +425,14 @@ def main():
             raise ValueError("For single track ITO, target_track_idx must be >= 0")
             
         fit_embedding = torch.nn.Parameter(initial_reference_feature, requires_grad=True)
+        print(f"[INFO] Fitting embedding shape: {fit_embedding.shape}")
         optimizer = torch.optim.AdamW([fit_embedding], lr=1e-2)
 
         text_encoder = CLAPTextEncoder()
         ito_embedding = full_base_embedding.clone()  
         ito_embedding[0, track_idx, :] = fit_embedding[0, 0, :]
         ito_embedding[0, track_idx + num_tracks_mix, :] = fit_embedding[0, 1, :]
+        print(f"[INFO] Initial ITO embedding shape: {ito_embedding.shape}")
         
         min_loss = float('inf')
         min_loss_step = 0
@@ -522,13 +524,11 @@ def main():
                 min_loss = total_clap_loss.item()
                 min_loss_step = ito_step
 
-            full_input = pred_mixed_tracks.contiguous().view(bs * 2, 1, -1)
+            full_input = pred_mixed_tracks.clone().view(bs*2, num_tracks, -1)
             current_embeddings = model.mix_encoder(full_input)
-            # Restore to (BS, 2*NumTracks, Dim) as expected by controller in modules.py
-            current_embeddings = current_embeddings.view(bs, 2, -1) 
+            current_embeddings = current_embeddings.view(bs, num_tracks, -1) 
             
             ito_embedding = current_embeddings.detach()
-
             ito_embedding[0, track_idx, :] = fit_embedding[0, 0, :]
             ito_embedding[0, track_idx + num_tracks_mix, :] = fit_embedding[0, 1, :]
 
