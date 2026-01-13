@@ -392,7 +392,7 @@ def main():
         #                 json.dump(json_data, f, indent=4)
 
         # ITO
-        text_info = args.control_info[c_idx]
+        text_info = args.control_info[1]
         prompt_str = text_info[2]
         print(text_info[0], type(text_info[0]))
         track_idx = int(text_info[0])
