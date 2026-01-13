@@ -451,8 +451,10 @@ def main():
             
             target_L = full_base_embedding[0:1, track_idx : track_idx + 1, :]
             target_R = full_base_embedding[0:1, track_idx + num_tracks_mix : track_idx + num_tracks_mix + 1, :]
+            print(f"[INFO] Target L shape: {target_L.shape}, Target R shape: {target_R.shape}")
             
             initial_reference_feature = torch.cat([target_L, target_R], dim=1)
+            print(f"[INFO] Initial reference feature shape: {initial_reference_feature.shape}")
             
             fit_embedding = torch.nn.Parameter(initial_reference_feature, requires_grad=True)
             optimizer = torch.optim.RAdam([fit_embedding], lr=args.ito_lr) # Using RAdam as per user preference
