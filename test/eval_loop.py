@@ -405,11 +405,7 @@ def main():
 
             with torch.no_grad():
 
-                full_input = pred_mixed_tracks.clone().view(bs*2, num_tracks, -1)
-                full_base_embedding = model.mix_encoder(full_input)
-                print(f"[INFO] Full base embedding shape (before reshape): {full_base_embedding.shape}")
-                full_base_embedding = full_base_embedding.view(bs, num_tracks, -1)  # restore
-                print(f"[INFO] Full base embedding shape: {full_base_embedding.shape}")
+                full_base_embedding = model.mix_encoder(pred_mixed_tracks)
                 
                 # 確保基底不需要梯度
                 full_base_embedding = full_base_embedding.detach()
@@ -529,9 +525,7 @@ def main():
                 min_loss = total_clap_loss.item()
                 min_loss_step = ito_step
 
-            full_input = pred_mixed_tracks.clone().view(bs*2, num_tracks, -1)
-            current_embeddings = model.mix_encoder(full_input)
-            current_embeddings = current_embeddings.view(bs, num_tracks, -1) 
+            current_embeddings = model.mix_encoder(pred_mixed_tracks.clone())
             
             ito_embedding = current_embeddings.detach()
             ito_embedding[0, track_idx, :] = fit_embedding[0, 0, :]
