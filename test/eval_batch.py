@@ -498,8 +498,26 @@ def main():
             song_losses = []
             
             for ito_step in range(args.ito_num_step):
-                # ... loop logic uses ito_embedding which is correctly constructed ...
                 optimizer.zero_grad()
+                
+                # [ITO Logic] Construct ito_embedding from the learnable parameter
+                if is_master_control:
+                    # For Full Mix, we optimize the whole embedding directly
+                    ito_embedding = fit_embedding
+                else:
+                    # For Track Control, we mask the specific track into the static base
+                    # Use masking to preserve gradients from fit_embedding
+                    base_static = full_base_embedding.detach()
+                    
+                    fit_expanded = torch.zeros_like(base_static)
+                    fit_expanded[0, effective_target_idx, :] = fit_embedding[0, 0, :]
+                    fit_expanded[0, effective_target_idx + num_tracks_mix, :] = fit_embedding[0, 1, :]
+                    
+                    mask = torch.zeros_like(base_static)
+                    mask[0, effective_target_idx, :] = 1.0
+                    mask[0, effective_target_idx + num_tracks_mix, :] = 1.0
+                    
+                    ito_embedding = (fit_expanded * mask) + (base_static * (1 - mask))
 
                 # Prepare Reference Audio
                 if is_master_control:
@@ -507,13 +525,10 @@ def main():
                 else:
                     norm_tracks = batch_stereo_tracks_peak_normalize(curr_ref_tracks)
                     bs_ref, chs_ref, num_tracks_ref, len_ref = norm_tracks.shape
+                    # Flatten for run_diffmst
                     ref_audio_input = norm_tracks.view(bs_ref, chs_ref*num_tracks_ref, -1)
                 
                 # Run Model
-                # Note: run_diffmst expects ito_embedding (or ito_modified_embedding)
-                # We need to make sure we call it correctly.
-                # In eval_loop, we passed `ito_embedding=ito_embedding`
-                
                 if ito_step == 0:
                     prev_t, prev_f, prev_m = pred_track_params, pred_fx_params, pred_master_params
                 else:
@@ -548,18 +563,22 @@ def main():
                 target_mono = target_audio.mean(dim=1, keepdim=True)
                 
                 loss = clap_loss_fn(target_mono, prompt_str, sample_rate=44100, distance_fn="cosine")
+                
                 if not loss.requires_grad:
                     print("!! CRITICAL ERROR: Loss does not require grad. computational graph is broken anywhere.")
+                
                 loss.backward()
+                
                 if fit_embedding.grad is None:
                     print("!! CRITICAL ERROR: fit_embedding.grad is None. Backprop didn't reach the parameter.")
+                
                 prev_embedding = fit_embedding.clone().detach()
                 optimizer.step()
                 
-                param_change = (fit_embedding - prev_embedding).abs().sum().item()
-                grad_norm = fit_embedding.grad.norm().item() if fit_embedding.grad is not None else 0.0
-                if param_change == 0 and grad_norm > 0:
-                    print("!! WARNING: Parameters did not change despite having gradients. Check learning rate.")
+                # param_change = (fit_embedding - prev_embedding).abs().sum().item()
+                # grad_norm = fit_embedding.grad.norm().item() if fit_embedding.grad is not None else 0.0
+                # if param_change == 0 and grad_norm > 0:
+                #     print("!! WARNING: Parameters did not change despite having gradients. Check learning rate.")
                     
                 loss_val = loss.item()
                 song_losses.append(loss_val)
@@ -567,8 +586,6 @@ def main():
                 if loss_val < min_loss:
                     min_loss = loss_val
                     min_loss_step = ito_step
-                    # Save only the LOWEST loss result to memory.
-                    # This replaces the previous best, keeping memory usage constant.
                     best_results = {
                         "mix": pred_mix_ito.detach(),
                         "tracks": pred_tracks_ito.detach(),
@@ -579,32 +596,6 @@ def main():
 
                 if ito_step % 5 == 0 or ito_step == args.ito_num_step - 1:
                     print(f"ITO Step {ito_step+1}/{args.ito_num_step}, CLAP Loss: {loss_val:.4f}, Min Loss: {min_loss:.4f} at step {min_loss_step}")
-                    
-                    # Note: We do NOT update curr_ref_mix/tracks here.
-                    # We keep the reference fixed to the baseline to prevent drift.
-                    
-                # Update embedding for next step from output? 
-                # In eval_loop:
-                # full_input = pred_mixed_tracks.contiguous().view(...)
-                # current_embeddings = model.mix_encoder(full_input)
-                # ito_embedding = current_embeddings.detach()
-                # ...
-                
-                if is_master_control:
-                    ito_embedding = model.mix_encoder(pred_mix_ito)
-                else:
-                    full_input_next = pred_tracks_ito.detach().contiguous().view(bs, num_tracks * 2, -1)
-                    next_embeddings = model.mix_encoder(full_input_next)
-                    base = next_embeddings.detach()
-                    fit_expanded = torch.zeros_like(base)
-                    fit_expanded[0, target_idx, :] = fit_embedding[0, 0, :]
-                    fit_expanded[0, target_idx + num_tracks_mix, :] = fit_embedding[0, 1, :]
-                
-                    mask = torch.zeros_like(base)
-                    mask[0, target_idx, :] = 1.0
-                    mask[0, target_idx + num_tracks_mix, :] = 1.0
-                    
-                    ito_embedding = (fit_expanded * mask) + (base * (1 - mask))
         
             all_songs_losses.append(song_losses)
             
