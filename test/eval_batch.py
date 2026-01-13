@@ -17,8 +17,9 @@ import pyloudnorm as pyln
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from mst.utils import load_diffmst, run_diffmst, batch_stereo_peak_normalize, batch_stereo_tracks_peak_normalize
-from mst.loss import AudioFeatureLoss
+from mst.loss import AudioFeatureLoss, CLAPFeatureLoss
 import eval_metric
+import matplotlib.pyplot as plt
 
 def compute_clap_similarity(clap_model, audio, text, original_sr=44100):
     # audio: (len,) or (channels, len)
@@ -77,10 +78,14 @@ def parse_args():
     parser.add_argument("--output_dir", type=str, default="./eval_batch_outputs", help='Directory to save outputs')
     parser.add_argument("--exp_name", type=str, default="batch_test", help='Experiment name')
     parser.add_argument("--target_lufs", type=float, default=-22.0, help='Target output LUFS')
-    parser.add_argument("--num_iterations", type=int, default=1, help='Number of text prompt iterations')
+    parser.add_argument("--num_iterations", type=int, default=1, help='Number of text prompt iterations (Deprecated, used for text interpolation)')
     parser.add_argument("--style_alpha", type=float, default=0.5, help='Style interpolation alpha for text prompt')
     parser.add_argument("--text_alpha", type=float, default=1.0, help='Text interpolation alpha for text prompt')
     parser.add_argument("--is_panning", type=bool, default=False, help='Whether the text prompt is for panning or not')
+    
+    # ITO Parameters
+    parser.add_argument("--ito_num_step", type=int, default=50, help='Number of ITO steps')
+    parser.add_argument("--clap_checkpoint", type=str, default=None, help='Path to CLAP model checkpoint')
     
     return parser.parse_args()
 
@@ -233,8 +238,16 @@ def main():
     
     # Initialize AudioFeatureLoss
     af_loss_fn = AudioFeatureLoss([0.1, 0.001, 1.0, 1.0, 0.1], 44100)
+    
+    # Initialize CLAP Loss for ITO
+    try:
+        clap_loss_fn = CLAPFeatureLoss(ckpt_path=args.clap_checkpoint)
+    except Exception as e:
+        print(f"Warning: Could not initialize CLAPFeatureLoss: {e}. ITO might fail.")
+        clap_loss_fn = None
 
     all_metrics = []
+    all_songs_losses = [] # Store loss history for all songs: list of lists
     
     for song_idx, song_rel_path in enumerate(tqdm(selected_songs)):
         song_name = os.path.basename(song_rel_path).replace("_RAW", "")
@@ -400,62 +413,224 @@ def main():
             )
             (pred_mix_base, pred_tracks_base, pred_track_params, pred_fx_params, pred_master_params) = res_baseline
             
-        # --- Step 2: Text Prompt on Target Track ---
+        # --- Step 2: Text Prompt on Target Track (ITO) ---
         # Target track index determined earlier
 
         # track_idx, text_alpha, style_alpha, text_prompt, is_panning = text
         
-        if args.num_iterations > 0:
-            text_input = (target_idx, args.text_alpha, args.style_alpha, args.text_prompt, args.is_panning)
+        # NOTE: Text Interpolation method commented out in favor of ITO
+        # if args.num_iterations > 0 and False:
+        #     text_input = (target_idx, args.text_alpha, args.style_alpha, args.text_prompt, args.is_panning)
+        #     ... (original logic) ...
+        
+        if args.ito_num_step > 0 and clap_loss_fn is not None:
+            print(f"Running ITO for {args.ito_num_step} steps on track {target_idx} with prompt '{args.text_prompt[0]}'")
             
-            # Initial reference and params from baseline
-            current_ref_tracks = pred_tracks_base # (bs, 2, num_tracks, len)
-            current_ref_mix = pred_mix_base # (bs, 2, len)
+            # Prepare for ITO
+            prompt_str = args.text_prompt[0] # Assuming single prompt for now
+            bs, num_tracks, seq_len = pred_tracks_base.shape[0], pred_tracks_base.shape[2], pred_tracks_base.shape[3]
             
-            current_track_params = pred_track_params
-            current_fx_params = pred_fx_params
-            current_master_params = pred_master_params
+            # Calculate initial embedding from baseline prediction
+            with torch.no_grad():
+                # pred_tracks_base: (bs, 2, num_tracks, len) -> Need (bs, 2*num_tracks, len) for mix_encoder
+                # But wait, mix_encoder expects (bs, 2*num_tracks, len) OR (bs, 2, len)?
+                # Standard mix_encoder in Diff-MST takes (bs, 2, len) if it's stereo mix, 
+                # but here it is used for separate tracks embedding extraction?
+                # In eval_loop: full_base_embedding = model.mix_encoder(pred_mixed_tracks.clone().view(bs, 2*num_tracks, -1))
+                # Let's verify input shape. pred_tracks_base is (1, 2, num_tracks, len)
+                # We need to reshape to (1, 2*num_tracks, len)
+                
+                full_input = pred_tracks_base.clone().view(bs, num_tracks * 2, -1)
+                full_base_embedding = model.mix_encoder(full_input)
+                # full_base_embedding: (bs, 2*num_tracks, embed_dim)
+                full_base_embedding = full_base_embedding.detach()
             
-            pred_mix_text = None
-            pred_tracks_text = None
-
-            for i in range(args.num_iterations):
-                # Prepare reference for text prompt
+            num_tracks_mix = full_base_embedding.size(1) // 2
+            
+            # Extract target track embeddings
+            # L is at [:, 2*idx, :], R is at [:, 2*idx+1, :] based on view(bs, num_tracks * 2, -1) if interleaved?
+            # Wait, view(bs, num_tracks*2, -1) from (bs, 2, num_tracks, len)
+            # data is [L_t1, L_t2...][R_t1, R_t2...]
+            # if we do view(bs, 2*num_tracks, -1), it becomes [L_t1, L_t2... R_t1, R_t2...] sequence
+            # So L of track k is at index k, R of track k is at index k + num_tracks
+            
+            # Let's double check eval_loop logic again.
+            # eval_loop main:
+            # pred_mixed_tracks: (bs, 2, num_tracks, seq_len)
+            # full_input = pred_mixed_tracks.clone().view(bs*2, num_tracks, -1) -> This intermixes differently
+            # In eval_loop snippet I corrected:
+            # full_input = pred_mixed_tracks.clone().view(bs, num_tracks * 2, -1)
+            # If tensor is contiguous, (bs, 2, num_tracks, len) -> (bs, 2*num_tracks, len)
+            # Ch0: T0, T1, ... Tn
+            # Ch1: T0, T1, ... Tn
+            # Flattening 2 and num_tracks:
+            # It will be T0_L, T1_L..., T0_R, T1_R...
+            # So index k is L, index k+num_tracks is R
+            
+            target_L = full_base_embedding[:, target_idx : target_idx + 1, :]
+            target_R = full_base_embedding[:, target_idx + num_tracks : target_idx + num_tracks + 1, :]
+            
+            initial_reference_feature = torch.cat([target_L, target_R], dim=1)
+            
+            fit_embedding = torch.nn.Parameter(initial_reference_feature, requires_grad=True)
+            optimizer = torch.optim.RAdam([fit_embedding], lr=2e-4) # Using RAdam as per user preference
+            
+            ito_embedding = full_base_embedding.clone()
+            
+            # Initialize reference for mixing (Audio)
+            # For ITO, usually we use the PREVIOUS step's output as reference? 
+            # Or use the baseline output as static reference?
+            # In eval_loop: 
+            # if example["ref"][0] - 1 (sum mix): ref_audio = pred_mix.detach() 
+            # else: ref_audio = pred_mixed_tracks.detach()
+            # Here we are targeting a track or master.
+            
+            curr_ref_mix = pred_mix_base.detach()
+            curr_ref_tracks = pred_tracks_base.detach()
+            
+            min_loss = float('inf')
+            min_loss_step = 0
+            best_results = {
+                "mix": pred_mix_base,
+                "tracks": pred_tracks_base,
+                "track_params": pred_track_params,
+                "fx_params": pred_fx_params,
+                "master_params": pred_master_params
+            }
+            
+            song_losses = []
+            
+            for ito_step in range(args.ito_num_step):
+                optimizer.zero_grad()
+                
+                # Update ito_embedding with current fit_embedding
+                # Index k is L, index k+num_tracks is R
+                ito_embedding[:, target_idx, :] = fit_embedding[:, 0, :]
+                ito_embedding[:, target_idx + num_tracks, :] = fit_embedding[:, 1, :]
+                
+                # Prepare Reference Audio
                 if is_master_control:
-                    # Use Mix as reference
-                    ref_audio_text = batch_stereo_peak_normalize(current_ref_mix)
+                     ref_audio_input = batch_stereo_peak_normalize(curr_ref_mix)
                 else:
-                    # Use Tracks as reference
-                    norm_tracks = batch_stereo_tracks_peak_normalize(current_ref_tracks)
-                    bs, chs, num_tracks, seq_len = norm_tracks.shape
-                    ref_audio_text = norm_tracks.view(bs, chs*num_tracks, -1)
+                     norm_tracks = batch_stereo_tracks_peak_normalize(curr_ref_tracks)
+                     bs_ref, chs_ref, num_tracks_ref, len_ref = norm_tracks.shape
+                     # Flatten for run_diffmst
+                     ref_audio_input = norm_tracks.view(bs_ref, chs_ref*num_tracks_ref, -1)
+                
+                # Run Model
+                # Note: run_diffmst expects ito_embedding (or ito_modified_embedding)
+                # We need to make sure we call it correctly.
+                # In eval_loop, we passed `ito_embedding=ito_embedding`
+                
+                # We use baseline prev params to start? Or current?
+                # Usually we want to refine parameters.
+                # Let's use current best parameters? Or just let the model predict from scratch based on embedding?
+                # The model predicts delta or absolute?
+                # The controller predicts absolute parameters based on embeddings. 
+                # So we don't strictly *need* prev params unless we want smooth transition or if using text control logic that relies on it.
+                # eval_loop passes prev params. We should probably pass the ones from baseline first, then update?
+                # Actually eval_loop passes them. Let's pass the baseline ones for stability or keep updating?
+                # In eval_loop: 
+                # prev_fx_bus_param_dict = pred_fx_bus_param_dict (from previous step)
+                # So it chains them.
+                
+                if ito_step == 0:
+                    prev_t, prev_f, prev_m = pred_track_params, pred_fx_params, pred_master_params
+                else:
+                    prev_t, prev_f, prev_m = best_results["track_params"], best_results["fx_params"], best_results["master_params"]
+                
+                result = run_diffmst(
+                    tracks_slice,
+                    ref_audio_input, # Detached previous output
+                    model,
+                    mix_console,
+                    text=None, # No text interpolation
+                    interpolation=args.interpolation,
+                    track_start_idx=0,
+                    ref_start_idx=0,
+                    ito_embedding=ito_embedding, # Pass the optimized embedding
+                    # prev_track_param_dict=prev_t,
+                    # prev_fx_bus_param_dict=prev_f,
+                    # prev_master_bus_param_dict=prev_m,
+                    use_master_bus=True
+                )
+                
+                (pred_mix_ito, pred_tracks_ito, p_track, p_fx, p_master) = result
+                
+                # Compute Loss
+                # Loss on target track (mono)
+                if is_master_control:
+                    target_audio = pred_mix_ito
+                else:
+                    target_audio = pred_tracks_ito[:, :, target_idx, :]
+                
+                # Mix to mono for CLAP
+                target_mono = target_audio.mean(dim=1, keepdim=True)
+                
+                loss = clap_loss_fn(target_mono, prompt_str, sample_rate=44100, distance_fn="cosine")
+                loss.backward()
+                optimizer.step()
+                
+                loss_val = loss.item()
+                song_losses.append(loss_val)
+                
+                if loss_val < min_loss:
+                    min_loss = loss_val
+                    min_loss_step = ito_step
+                    best_results = {
+                        "mix": pred_mix_ito.detach(),
+                        "tracks": pred_tracks_ito.detach(),
+                        "track_params": p_track,
+                        "fx_params": p_fx,
+                        "master_params": p_master
+                    }
+                    
+                    # Update reference for next step using BEST result so far? 
+                    # Or use the immediate result? 
+                    # eval_loop uses "pred_mixed_tracks" from the immediate step output for next step ref.
+                    curr_ref_mix = pred_mix_ito.detach()
+                    curr_ref_tracks = pred_tracks_ito.detach()
+                    
+                # Update embedding for next step from output? 
+                # In eval_loop:
+                # full_input = pred_mixed_tracks.contiguous().view(...)
+                # current_embeddings = model.mix_encoder(full_input)
+                # ito_embedding = current_embeddings.detach()
+                # ...
                 
                 with torch.no_grad():
-                    res_text = run_diffmst(
-                        tracks_slice,
-                        ref_audio_text.clone(),
-                        model,
-                        mix_console,
-                        text=text_input,
-                        interpolation=args.interpolation,
-                        track_start_idx=0,
-                        ref_start_idx=0,
-                        prev_track_param_dict=current_track_params,
-                        prev_fx_bus_param_dict=current_fx_params,
-                        prev_master_bus_param_dict=current_master_params,
-                        use_master_bus=True
-                    )
-                    (pred_mix_text, pred_tracks_text, current_track_params, current_fx_params, current_master_params) = res_text
-                
-                # Update reference for next iteration
-                current_ref_tracks = pred_tracks_text
-                current_ref_mix = pred_mix_text
-
-            # Update params to the final ones for saving
-            pred_track_params = current_track_params
-            pred_fx_params = current_fx_params
-            pred_master_params = current_master_params
+                     full_input_next = pred_tracks_ito.detach().contiguous().view(bs, num_tracks * 2, -1)
+                     next_embeddings = model.mix_encoder(full_input_next)
+                     ito_embedding = next_embeddings.detach()
+            
+            all_songs_losses.append(song_losses)
+            
+            # Use best results
+            pred_mix_text = best_results["mix"]
+            pred_tracks_text = best_results["tracks"]
+            pred_track_params = best_results["track_params"]
+            pred_fx_params = best_results["fx_params"]
+            pred_master_params = best_results["master_params"]
+            
+            print(f"Best ITO loss: {min_loss:.4f} at step {min_loss_step}")
+            
+            # Save Loss Curve for this song
+            song_out_dir = output_dir / song_name
+            song_out_dir.mkdir(exist_ok=True)
+            
+            plt.figure(figsize=(10, 6))
+            plt.plot(song_losses, label=f'{song_name}')
+            plt.title(f'ITO Loss Curve - {song_name}')
+            plt.xlabel('Step')
+            plt.ylabel('CLAP Loss')
+            plt.legend()
+            plt.grid(True)
+            plt.savefig(song_out_dir / "loss_curve.png")
+            plt.close()
+            
         else:
+            if args.ito_num_step > 0:
+                 print("Skipping ITO because CLAP loss not initialized.")
             pred_mix_text = None
             pred_tracks_text = None
 
@@ -472,7 +647,7 @@ def main():
             other_stems_base[:, target_idx, :] = 0
             sum_others_base = other_stems_base.sum(dim=1) # (2, len)
         
-        if args.num_iterations > 0:
+        if args.ito_num_step > 0 and pred_mix_text is not None:
             # Text
             if is_master_control:
                 target_stem_text = pred_mix_text[0]
@@ -491,7 +666,8 @@ def main():
         metrics.update(compute_audio_metrics(target_stem_base, "target_audio_base"))
         metrics.update(compute_audio_metrics(sum_others_base, "others_audio_base"))
 
-        if args.num_iterations > 0:
+        if args.ito_num_step > 0 and pred_mix_text is not None:
+            metrics["ITO_best_loss"] = min_loss
             metrics.update(compute_audio_metrics(target_stem_text, "target_text_modified"))
             metrics.update(compute_audio_metrics(sum_others_text, "others_text_modified"))
 
@@ -499,7 +675,7 @@ def main():
         # pred_mix_base: (1, 2, len)
         # ref_slice: (1, 2, len)
         af_losses_base = af_loss_fn(pred_mix_base, ref_slice)
-        if args.num_iterations > 0:
+        if args.ito_num_step > 0 and pred_mix_text is not None:
             af_losses_text = af_loss_fn(pred_mix_text, ref_slice)
         af_losses_sum = af_loss_fn(sum_mix, ref_slice)
 
@@ -508,7 +684,7 @@ def main():
         for k, v in af_losses_base.items():
             metrics[f"AF_base_{k}"] = v.item()
 
-        if args.num_iterations > 0:
+        if args.ito_num_step > 0 and pred_mix_text is not None:
             metrics["AF_text_total"] = sum(af_losses_text.values()).item()
             for k, v in af_losses_text.items():
                 metrics[f"AF_text_{k}"] = v.item()
@@ -526,8 +702,8 @@ def main():
                 
                 pred_target = target_stem_text
                 
-                metrics["CLAP_text_target_origin"] = compute_clap_similarity(clap_model, origin_target, args.text_prompt)
-                metrics["CLAP_text_target_pred"] = compute_clap_similarity(clap_model, pred_target, args.text_prompt)
+                metrics["CLAP_text_target_origin"] = compute_clap_similarity(clap_model, origin_target, args.text_prompt[0])
+                metrics["CLAP_text_target_pred"] = compute_clap_similarity(clap_model, pred_target, args.text_prompt[0])
             else:
                 print("Warning: Could not find CLAP model in text_encoder. Skipping CLAP metrics.")
 
@@ -538,7 +714,7 @@ def main():
         # --- Loudness Normalization ---
         # Normalize mixes to target LUFS
         pred_mix_base, pred_tracks_base = normalize_audio(pred_mix_base, pred_tracks_base, args.target_lufs, meter, "baseline")
-        if args.num_iterations > 0:
+        if args.ito_num_step > 0 and pred_mix_text is not None:
             pred_mix_text, pred_tracks_text = normalize_audio(pred_mix_text, pred_tracks_text, args.target_lufs, meter, "text")
         
         dummy_stems_sum = tracks_slice.unsqueeze(1).repeat(1, 2, 1, 1)
@@ -550,8 +726,8 @@ def main():
         
         # Save Mixes
         torchaudio.save(song_out_dir / "mix_baseline.wav", pred_mix_base.squeeze(0), 44100)
-        if args.num_iterations > 0:
-            torchaudio.save(song_out_dir / "mix_text.wav", pred_mix_text.squeeze(0), 44100)
+        if args.ito_num_step > 0 and pred_mix_text is not None:
+            torchaudio.save(song_out_dir / "mix_ito_text.wav", pred_mix_text.squeeze(0), 44100)
         torchaudio.save(song_out_dir / "mix_sum.wav", sum_mix.squeeze(0), 44100)
         
         # Normalize stems for audibility (Note: this changes relative mix balance in the saved file)
@@ -561,12 +737,12 @@ def main():
         torchaudio.save(song_out_dir / "target_baseline.wav", target_stem_base, 44100)
         torchaudio.save(song_out_dir / "others_baseline.wav", sum_others_base, 44100)
         
-        if args.num_iterations > 0:
+        if args.ito_num_step > 0 and pred_mix_text is not None:
             target_stem_text = normalize_stem(target_stem_text, args.target_lufs, meter, "target_text")
             sum_others_text = normalize_stem(sum_others_text, args.target_lufs, meter, "others_text")
 
-            torchaudio.save(song_out_dir / "target_text.wav", target_stem_text, 44100)
-            torchaudio.save(song_out_dir / "others_text.wav", sum_others_text, 44100)
+            torchaudio.save(song_out_dir / "target_ito_text.wav", target_stem_text, 44100)
+            torchaudio.save(song_out_dir / "others_ito_text.wav", sum_others_text, 44100)
             
         metrics["song"] = song_name
         all_metrics.append(metrics)
@@ -608,6 +784,37 @@ def main():
         
     with open(output_dir / "avg_metrics.json", 'w') as f:
         json.dump(avg_metrics, f, indent=4)
+
+    # --- Plot Average Loss Curve ---
+    if args.ito_num_step > 0 and all_songs_losses:
+        try:
+            # list of lists -> (num_songs, num_iterations)
+            losses_arr = np.array(all_songs_losses) 
+            # Check dimensions
+            if losses_arr.ndim == 2:
+                avg_losses = np.mean(losses_arr, axis=0)
+                
+                plt.figure(figsize=(10, 6))
+                
+                # Plot individual songs faintly
+                for s_idx, s_losses in enumerate(all_songs_losses):
+                    plt.plot(range(len(s_losses)), s_losses, alpha=0.15, color='gray')
+                    
+                plt.plot(range(len(avg_losses)), avg_losses, label='Average Loss', color='blue', linewidth=2)
+                
+                plt.xlabel('Iteration')
+                plt.ylabel('Loss')
+                plt.title('Average CLAP Loss Optimization Curve')
+                plt.legend()
+                plt.grid(True)
+                plt.savefig(output_dir / "avg_loss_curve.png")
+                plt.close()
+                print(f"Saved average loss curve to {output_dir / 'avg_loss_curve.png'}")
+            else:
+                 print(f"Skipping average loss plot: Inconsistent loss array shape {losses_arr.shape}")
+            
+        except Exception as e:
+            print(f"Could not plot average loss curve: {e}")
 
 if __name__ == "__main__":
     main()
