@@ -439,7 +439,10 @@ def main():
             
             if is_master_control:
 
+                print(f"[INFO] pred_mix_base shape: {pred_mix_base.shape}")
+                
                 ito_embedding = model.mix_encoder(pred_mix_base)
+                print(f"[INFO] ito_embedding shape: {ito_embedding.shape}")
                 fit_embedding = torch.nn.Parameter(ito_embedding, requires_grad=True)
                 optimizer = torch.optim.RAdam([fit_embedding], lr=args.ito_lr)
                 
