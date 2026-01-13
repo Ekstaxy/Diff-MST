@@ -484,9 +484,6 @@ def main():
             
             for ito_step in range(args.ito_num_step):
                 optimizer.zero_grad()
-                
-                if fit_embedding.grad is None:
-                    print("!! CRITICAL ERROR: fit_embedding.grad is None. Backprop didn't reach the parameter.")
 
                 # Update ito_embedding with current fit_embedding
                 # Index k is L, index k+num_tracks is R
@@ -544,6 +541,8 @@ def main():
                 if not loss.requires_grad:
                     print("!! CRITICAL ERROR: Loss does not require grad. computational graph is broken anywhere.")
                 loss.backward()
+                if fit_embedding.grad is None:
+                    print("!! CRITICAL ERROR: fit_embedding.grad is None. Backprop didn't reach the parameter.")
                 prev_embedding = fit_embedding.clone().detach()
                 optimizer.step()
                 
