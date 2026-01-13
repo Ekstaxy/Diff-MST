@@ -251,11 +251,11 @@ def main():
                 lufs_delta_db = target_lufs_db - mix_lufs_db
                 pred_mix = pred_mix * 10 ** (lufs_delta_db / 20)
 
-                mix_filepath = output_dir / f"step{c_idx}-{method_name}-ref={song_section}.wav"
+                mix_filepath = output_dir / f"audio-{method_name}.wav"
                 torchaudio.save(mix_filepath, pred_mix.view(chs, -1), 44100)
 
                 # Save individual processed stems
-                stems_dir = output_dir / f"step{c_idx}-{method_name}-ref={song_section}-stems"
+                stems_dir = output_dir / f"audio-{method_name}-stems"
                 stems_dir.mkdir(exist_ok=True)
                 
                 # Assuming batch size is 1
@@ -552,11 +552,11 @@ def main():
         best_stems = best_result['stems']
         bs, chs, seq_len = best_mix.shape
         
-        mix_filepath = output_dir / f"step{c_idx}-{method_name}-ref={song_section}-best.wav"
+        mix_filepath = output_dir / f"ito-step{min_loss_step}-{method_name}-best.wav"
         torchaudio.save(mix_filepath, best_mix.view(chs, -1), 44100)
         
         # Save individual processed stems for the BEST result only
-        stems_dir = output_dir / f"step{c_idx}-{method_name}-ref={song_section}-stems-best"
+        stems_dir = output_dir / f"ito-step{min_loss_step}-{method_name}-stems-best"
         stems_dir.mkdir(exist_ok=True)
             
         print(best_stems.shape)
