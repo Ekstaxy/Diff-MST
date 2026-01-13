@@ -47,6 +47,8 @@ def parse_args():
     # ITO-Master Parameters
     parser.add_argument("--ito_num_step", type=int, default=4,
                         help='Number of ITO-Master steps to use during inference')
+    parser.add_argument("--ito_lr", type=float, default=2e-4,
+                        help='Learning rate for ITO-Master optimization')
     
     # Other parameters
     parser.add_argument("--output_dir", type=str, default="./eval_outputs",
@@ -425,7 +427,7 @@ def main():
             
         fit_embedding = torch.nn.Parameter(initial_reference_feature, requires_grad=True)
         print(f"[INFO] Fitting embedding shape: {fit_embedding.shape}")
-        optimizer = torch.optim.RAdam([fit_embedding], lr=2e-4)
+        optimizer = torch.optim.RAdam([fit_embedding], lr=args.ito_lr)
 
         text_encoder = CLAPTextEncoder()
         ito_embedding = full_base_embedding.clone()  
