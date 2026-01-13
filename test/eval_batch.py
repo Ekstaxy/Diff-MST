@@ -456,9 +456,11 @@ def main():
             
             fit_embedding = torch.nn.Parameter(initial_reference_feature, requires_grad=True)
             optimizer = torch.optim.RAdam([fit_embedding], lr=args.ito_lr) # Using RAdam as per user preference
+            print(f"[INFO] Fitting embedding shape: {fit_embedding.shape}")
             
             # [Corrected] Construct ito_embedding using Masking to ensure gradient flow
             base = full_base_embedding.clone().detach() # (batch, 2*num_tracks, emb_dim)
+            print(f"[INFO] Base embedding shape: {base.shape}")
             
             fit_expanded = torch.zeros_like(base)
             fit_expanded[0, track_idx, :] = fit_embedding[0, 0, :]
