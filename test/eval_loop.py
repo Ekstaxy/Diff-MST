@@ -18,7 +18,6 @@ def parse_args():
                         help='Path to naive.yaml')
     parser.add_argument("--checkpoint", type=str, required=True,
                         help='Path to model checkpoint')
-
     
     # Audio parameters
     parser.add_argument("--tracks_path", type=str, 
@@ -28,11 +27,9 @@ def parse_args():
     # Looping parameters
     parser.add_argument("--control_type", type=str, nargs='+', default=["audio"],
                         help="Control types to use for mixing (audio or text)")    
-    # parser.add_argument("--control_info", type=str, nargs='+', 
-    #                     default=["/kaggle/input/medley-db-v2/V2/TleilaxEnsemble_Late/TleilaxEnsemble_Late_MIX.wav", (-1, 1, "The sound is dark"), (2, 1, "The sound is bright")],
-    #                     help="Control information (file paths for audio, text prompts for text in format: (track, weight, 'text'). If track is -1, use master bus.)")
+
     parser.add_argument("--control_info", type=str, nargs='+', 
-                    default=["/kaggle/input/medley-db-v2/V2/TleilaxEnsemble_Late/TleilaxEnsemble_Late_MIX.wav", (-1, 1, "Bright")],
+                    default=["/content/V2/TleilaxEnsemble_Late/TleilaxEnsemble_Late_MIX.wav", (1, 1, "Bright")],
                     help="Control information (file paths for audio, text prompts for text in format: (track, weight, 'text'). If track is -1, use master bus.)")
     
     # Verse/Chorus indices
@@ -48,7 +45,6 @@ def parse_args():
     # ITO-Master Parameters
     parser.add_argument("--ito_num_step", type=int, default=4,
                         help='Number of ITO-Master steps to use during inference')
-    
     
     # Other parameters
     parser.add_argument("--output_dir", type=str, default="./eval_outputs",
@@ -183,8 +179,6 @@ def main():
         # return
         
     # Control type and info checks
-    assert len(args.control_type) == len(args.control_info), \
-        "Number of control types must match number of control info entries."
     for c_idx, c_type in enumerate(args.control_type):
         assert c_type in ["audio", "text"], f"Unsupported control type: {c_type}"
 
