@@ -435,6 +435,8 @@ def main():
         
         min_loss = float('inf')
         min_loss_step = 0
+        best_mix = None
+        best_stems = None
         all_results = []
 
         for ito_step in tqdm.tqdm(range(args.ito_num_step)):
@@ -522,6 +524,9 @@ def main():
             if total_clap_loss < min_loss:
                 min_loss = total_clap_loss.item()
                 min_loss_step = ito_step
+                best_mix = pred_mix.detach()
+                best_stems = pred_mixed_tracks.detach()
+
 
             current_embeddings = model.mix_encoder(pred_mixed_tracks.clone().view(1, 2*num_tracks, -1))
             
@@ -538,7 +543,6 @@ def main():
             all_results.append({
                 'step': ito_step + 1,
                 'loss': total_clap_loss.item(),
-                'audio': pred_mix.cpu(),
                 'stems': pred_mixed_tracks.cpu(),
                 'params': pred_track_param_dict,
             })
@@ -547,9 +551,6 @@ def main():
 
         # Save Best Result
         print(f"[INFO] Best step: {all_results[min_loss_step]['step']}, Loss: {min_loss}")
-        best_result = all_results[min_loss_step]
-        best_mix = best_result['audio']
-        best_stems = best_result['stems']
         bs, chs, seq_len = best_mix.shape
         
         mix_filepath = output_dir / f"ito-step{min_loss_step+1}-{method_name}-best.wav"

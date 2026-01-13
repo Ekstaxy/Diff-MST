@@ -577,6 +577,8 @@ def main():
                 if loss_val < min_loss:
                     min_loss = loss_val
                     min_loss_step = ito_step
+                    # Save only the LOWEST loss result to memory.
+                    # This replaces the previous best, keeping memory usage constant.
                     best_results = {
                         "mix": pred_mix_ito.detach(),
                         "tracks": pred_tracks_ito.detach(),
@@ -585,11 +587,8 @@ def main():
                         "master_params": p_master
                     }
                     
-                    # Update reference for next step using BEST result so far? 
-                    # Or use the immediate result? 
-                    # eval_loop uses "pred_mixed_tracks" from the immediate step output for next step ref.
-                    curr_ref_mix = pred_mix_ito.detach()
-                    curr_ref_tracks = pred_tracks_ito.detach()
+                    # Note: We do NOT update curr_ref_mix/tracks here.
+                    # We keep the reference fixed to the baseline to prevent drift.
                     
                 # Update embedding for next step from output? 
                 # In eval_loop:
