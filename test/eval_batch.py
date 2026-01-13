@@ -345,18 +345,20 @@ def main():
                 
                 energy = target_slice.pow(2).mean().item()
                 
-                if energy > 1e-4: # Threshold for "active"
-                    start_idx = try_idx
-                    found_active = True
-                    break
+                # if energy > 1e-4: # Threshold for "active"
+                #     start_idx = try_idx
+                #     found_active = True
+                #     break
                 
                 if energy > best_energy:
                     best_energy = energy
                     best_idx = try_idx
             
-            if not found_active:
-                print(f"Warning: Could not find active slice for track {target_idx}. Using slice with max energy.")
-                start_idx = best_idx
+            # Use max energy slice
+            start_idx = best_idx
+            # if not found_active:
+            #     print(f"Warning: Could not find active slice for track {target_idx}. Using slice with max energy.")
+            #     start_idx = best_idx
         
         # Slice tracks to 10s (same as eval_loop) to avoid OOM
         if start_idx + slice_len > tracks_tensor.shape[-1]:
