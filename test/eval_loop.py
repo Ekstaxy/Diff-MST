@@ -411,6 +411,8 @@ def main():
                 
                 # 確保基底不需要梯度
                 full_base_embedding = full_base_embedding.detach()
+                print(f"[INFO] pred_mixed_tracks shape: {pred_mixed_tracks.shape}")
+                print(f"[INFO] Full base embedding shape: {full_base_embedding.shape}")
             
             num_tracks_mix = full_base_embedding.size(1) // 2
 
@@ -420,6 +422,7 @@ def main():
             target_R = full_base_embedding[0:1, track_idx + num_tracks_mix : track_idx + num_tracks_mix + 1, :]
             
             initial_reference_feature = torch.cat([target_L, target_R], dim=1) 
+            print(f"[INFO] Initial reference feature shape: {initial_reference_feature.shape}")
 
         else:
             raise ValueError("For single track ITO, target_track_idx must be >= 0")
