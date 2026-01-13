@@ -18,6 +18,8 @@ def parse_args():
                         help='Path to naive.yaml')
     parser.add_argument("--checkpoint", type=str, required=True,
                         help='Path to model checkpoint')
+    parser.add_argument("--clap_checkpoint", type=str, default=None,
+                        help='Path to CLAP model checkpoint')
     
     # Audio parameters
     parser.add_argument("--tracks_path", type=str, 
@@ -396,7 +398,7 @@ def main():
         bs, num_tracks, seq_len = tracks.size()
         print(f"[INFO] Using ITO text prompt: {prompt_str}")
 
-        clap_loss_fn = CLAPFeatureLoss()
+        clap_loss_fn = CLAPFeatureLoss(ckpt_path=args.clap_checkpoint)
 
         if track_idx >= 0:
 
