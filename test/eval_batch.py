@@ -1,3 +1,4 @@
+import math
 import torch
 import torchaudio
 import yaml
@@ -175,6 +176,14 @@ def compute_audio_metrics(waveform, name_suffix):
         metrics[f"sc_{band}_{name_suffix}"] = val
         
     return metrics
+
+def logp_x(x, baseline_vec, cov, cov_logdet):
+    diff = x - baseline_vec                 # 計算參數與平均值的差
+    b = torch.linalg.solve(cov, diff)       # 解線性方程，相當於計算 cov^{-1} * diff
+    norm = diff @ b                         # 計算 Mahalanobis 距離平方: diff^T * cov^{-1} * diff
+    return -0.5 * (
+        norm + cov_logdet + baseline_vec.shape[0] * math.log(2 * math.pi)
+    ) # 返回對數機率 (Log-Likelihood)
 
 def main():
     args = parse_args()
