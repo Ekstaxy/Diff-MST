@@ -36,6 +36,7 @@ def parse_args():
     
     # Dataset configs
     parser.add_argument("--dataset_root", type=str, required=True, help='Root directory of the dataset')
+    parser.add_argument("--dataset_yaml", type=str, default="data/medley_colab.yaml", help='Path to dataset metadata yaml')
     parser.add_argument("--num_songs", type=int, default=50, help='Number of songs to process for statistics')
     parser.add_argument("--seed", type=int, default=42, help='Random seed')
     parser.add_argument("--output_file", type=str, default="track_prior_stats.json", help='Path to save the JSON output')
@@ -48,31 +49,35 @@ def collect_track_params(args, model):
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     
-    # Find all songs
+    # Load dataset metadata
+    print(f"Loading dataset metadata from {args.dataset_yaml}...")
+    with open(args.dataset_yaml, 'r') as f:
+        dataset_meta = yaml.safe_load(f)
+        
+    # Get TRAINING songs
+    songs = []
+    if 'train' in dataset_meta:
+        songs.extend(list(dataset_meta['train'].keys()))
+    else:
+        print("Error: 'train' split not found in dataset yaml.")
+        return
+
+    # Filter songs that exist
     print(f"Scanning dataset at {args.dataset_root}...")
-    song_paths = []
+    valid_songs = []
     
-    # Heuristic to find song folders: Look for folders containing .wav files
-    # A robust way is to walk the directory
-    for root, dirs, files in os.walk(args.dataset_root):
-        # specific to current dataset structure: <song>/RAW/<tracks>
-        # Check if this folder has .wav files
-        wav_files = [f for f in files if f.endswith(".wav")]
-        if len(wav_files) > 1:
-            # Check if it looks like a song folder (e.g. ends with RAW)
-            if os.path.basename(root) == "RAW":
-                # Check if MIX exists in parent
-                mix_path = os.path.join(os.path.dirname(root), os.path.basename(os.path.dirname(root)) + "_MIX.wav")
-                # Or maybe inconsistent naming.
-                # Let's just store the relative path
-                rel_path = os.path.relpath(root, args.dataset_root)
-                song_paths.append(rel_path)
+    for song_path in songs:
+        full_path = os.path.join(args.dataset_root, song_path)
+        if os.path.exists(full_path):
+            valid_songs.append(song_path)
+    
+    print(f"Found {len(valid_songs)} valid songs out of {len(songs)} in metadata.")
     
     # Sort and shuffle to random selection
-    song_paths.sort()
-    random.shuffle(song_paths)
+    valid_songs.sort()
+    random.shuffle(valid_songs)
     
-    selected_songs = song_paths[:args.num_songs]
+    selected_songs = valid_songs[:args.num_songs]
     print(f"Selected {len(selected_songs)} songs for statistics calculation.")
     
     model.eval()
