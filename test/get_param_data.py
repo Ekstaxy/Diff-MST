@@ -269,7 +269,7 @@ def main():
     
     # Load Model
     print(f"Loading model from {args.checkpoint}...")
-    model = load_diffmst(args.config, args.checkpoint)
+    model, mix_console = load_diffmst(args.config, args.checkpoint)
     model.eval()
     
     collect_track_params(args, model)
