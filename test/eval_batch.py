@@ -309,10 +309,13 @@ def main():
         # Determine target track index early to find active slice
         target_idx = args.target_track_idx
         
+        # Determine if we need automatic selection (-2)
+        auto_select_track = (target_idx == -2)
+        
         # Handle Master Bus (-1)
         is_master_control = (target_idx == -1)
 
-        if not is_master_control:
+        if not is_master_control and not auto_select_track:
             if target_idx >= tracks_tensor.shape[1]:
                 print(f"Target track index {target_idx} out of bounds. Using 0.")
                 target_idx = 0
@@ -337,7 +340,7 @@ def main():
             for try_idx in range(0, scan_end, step):
                 # Check energy of target track in this slice
                 # tracks_tensor: (1, num_tracks, len)
-                if is_master_control:
+                if is_master_control or auto_select_track:
                     # Use sum of all tracks (mix proxy) for energy check
                     target_slice = tracks_tensor[0, :, try_idx : try_idx + slice_len].sum(dim=0)
                 else:
@@ -372,6 +375,10 @@ def main():
         # --- Select top 8 active tracks ---
         # Calculate energy of each track in the slice
         track_energies = tracks_slice.squeeze(0).pow(2).mean(dim=-1) # (num_tracks,)
+        
+        if auto_select_track:
+             target_idx = torch.argmax(track_energies).item()
+             print(f"Auto-selected highest energy track index: {target_idx}")
         
         # We must include target_idx if it's a specific track
         selected_indices = []

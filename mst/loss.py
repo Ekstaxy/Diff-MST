@@ -295,6 +295,8 @@ class CLAPFeatureLoss(torch.nn.Module):
         
         # Get CLAP embeddings
         embed = self.model.get_audio_embedding_from_data(x=audio, use_tensor=True)
+        # Normalize embeddings to unit length
+        embed = F.normalize(embed, p=2, dim=-1)
         return embed
 
     def process_text(self, text):
@@ -303,6 +305,8 @@ class CLAPFeatureLoss(torch.nn.Module):
         if not isinstance(text, list):
             text = [text]
         embed = self.model.get_text_embedding(text, use_tensor=True)
+        # Normalize embeddings to unit length
+        embed = F.normalize(embed, p=2, dim=-1)
         return embed
 
     def compute_distance(self, x, y, distance_fn):
