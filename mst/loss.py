@@ -263,7 +263,7 @@ class CLAPFeatureLoss(torch.nn.Module):
         self.model.load_ckpt(ckpt_path, verbose=False)  # download the default pretrained checkpoint
         self.model.eval()
 
-    def forward(self, input_audio, target, sample_rate, distance_fn='cosine'):
+    def forward(self, input_audio, target, neg_target, sample_rate, distance_fn='cosine'):
         # Process input audio
         input_embed = self.process_audio(input_audio, sample_rate)
 
@@ -271,7 +271,13 @@ class CLAPFeatureLoss(torch.nn.Module):
         if isinstance(target, torch.Tensor):
             target_embed = self.process_audio(target, sample_rate)
         elif isinstance(target, str) or (isinstance(target, list) and isinstance(target[0], str)):
-            target_embed = self.process_text(target)
+            if neg_target is not None:
+                pos_embed = self.process_text(target)
+                neg_embed = self.process_text(neg_target)
+                target_embed = pos_embed - neg_embed
+                target_embed = F.normalize(target_embed, p=2, dim=-1)
+            else:   
+                target_embed = self.process_text(target)
         else:
             raise ValueError("Target must be either audio tensor or text (string or list of strings)")
 

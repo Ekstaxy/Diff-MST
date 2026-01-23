@@ -74,6 +74,7 @@ def parse_args():
     parser.add_argument("--num_songs", type=int, default=1, help='Number of songs to evaluate')
     parser.add_argument("--seed", type=int, default=42, help='Random seed for reproducibility')
     parser.add_argument("--text_prompt", type=str, nargs='+', default=["Bright"], help='Text prompt to apply')
+    parser.add_argument("--neg_prompt", type=str, nargs='+', default=None, help='Negative text prompt to apply')
     parser.add_argument("--custom_reference", type=str, default=None, help='Path to custom reference audio (overrides dataset mix)')
     parser.add_argument("--interpolation", type=str, default="linear", help='Interpolation method: linear or slerp')
     parser.add_argument("--target_track_idx", type=int, default=-1, help='Track index to apply text prompt to (0-based)')
@@ -461,6 +462,7 @@ def main():
             
             # Prepare for ITO
             prompt_str = args.text_prompt[0] 
+            neg_str = args.neg_prompt[0] if args.neg_prompt is not None else None
             bs, num_tracks, seq_len = pred_tracks_base.shape[0], pred_tracks_base.shape[2], pred_tracks_base.shape[3]
             
             # --- WHOLE MIX ITO ADJUSTMENT ---
@@ -596,7 +598,7 @@ def main():
                 # Mix to mono for CLAP
                 target_mono = target_audio.mean(dim=1, keepdim=True)
                 
-                loss = clap_loss_fn(target_mono, prompt_str, sample_rate=44100, distance_fn="cosine")
+                loss = clap_loss_fn(target_mono, target=prompt_str, neg_target=neg_str, sample_rate=44100, distance_fn="cosine")
                 
                 if not loss.requires_grad:
                     print("!! CRITICAL ERROR: Loss does not require grad. computational graph is broken anywhere.")
