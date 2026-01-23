@@ -74,6 +74,7 @@ def parse_args():
     parser.add_argument("--num_songs", type=int, default=1, help='Number of songs to evaluate')
     parser.add_argument("--seed", type=int, default=42, help='Random seed for reproducibility')
     parser.add_argument("--text_prompt", type=str, nargs='+', default=["Bright"], help='Text prompt to apply')
+    parser.add_argument("--custom_reference", type=str, default=None, help='Path to custom reference audio (overrides dataset mix)')
     parser.add_argument("--interpolation", type=str, default="linear", help='Interpolation method: linear or slerp')
     parser.add_argument("--target_track_idx", type=int, default=-1, help='Track index to apply text prompt to (0-based)')
     parser.add_argument("--output_dir", type=str, default="./eval_batch_outputs", help='Directory to save outputs')
@@ -177,7 +178,11 @@ def compute_audio_metrics(waveform, name_suffix):
         
     return metrics
 
-def logp_x(x, baseline_vec, cov, cov_logdet):
+mu = None
+baseline_vec = None
+cov = None
+cov_logdet = None
+def logp_x(x):
     diff = x - baseline_vec                 # 計算參數與平均值的差
     b = torch.linalg.solve(cov, diff)       # 解線性方程，相當於計算 cov^{-1} * diff
     norm = diff @ b                         # 計算 Mahalanobis 距離平方: diff^T * cov^{-1} * diff
@@ -306,6 +311,10 @@ def main():
         tracks_tensor = tracks_tensor.view(1, -1, max_length) # (1, num_tracks, len)
         
         # Load reference mix
+        if args.custom_reference is not None:
+            mix_filepath = args.custom_reference
+            print(f"Using custom reference mix: {mix_filepath}")
+            
         ref_audio, ref_sr = torchaudio.load(mix_filepath, backend="soundfile")
         if ref_sr != 44100:
             ref_audio = torchaudio.functional.resample(ref_audio, ref_sr, 44100)
