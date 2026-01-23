@@ -389,7 +389,10 @@ def main():
                 slice_len = tracks_tensor.shape[-1]
                 
         tracks_slice = tracks_tensor[..., start_idx : start_idx + slice_len].clone()
-        ref_slice = ref_audio[..., start_idx : start_idx + slice_len].clone()
+        if args.custom_reference is not None:
+            ref_slice = ref_audio[..., 0: slice_len].clone()
+        else:
+            ref_slice = ref_audio[..., start_idx : start_idx + slice_len].clone()
 
         # --- Select top 8 active tracks ---
         # Calculate energy of each track in the slice
