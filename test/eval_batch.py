@@ -314,8 +314,9 @@ def main():
         if args.custom_reference is not None:
             mix_filepath = args.custom_reference
             print(f"Using custom reference mix: {mix_filepath}")
-            
+
         ref_audio, ref_sr = torchaudio.load(mix_filepath, backend="soundfile")
+        print(f"Loaded reference mix from {mix_filepath}, SR={ref_sr}, Shape={ref_audio.shape}")
         if ref_sr != 44100:
             ref_audio = torchaudio.functional.resample(ref_audio, ref_sr, 44100)
         ref_audio = ref_audio.view(1, 2, -1) # (1, 2, len)
