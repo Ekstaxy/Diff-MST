@@ -274,7 +274,9 @@ class CLAPFeatureLoss(torch.nn.Module):
             if neg_target is not None:
                 pos_embed = self.process_text(target)
                 neg_embed = self.process_text(neg_target)
-                target_embed = pos_embed - neg_embed
+                target_direction = pos_embed - neg_embed
+                target_direction = F.normalize(target_direction, p=2, dim=-1)
+                target_embed = input_embed + target_direction
                 target_embed = F.normalize(target_embed, p=2, dim=-1)
             else:   
                 target_embed = self.process_text(target)
