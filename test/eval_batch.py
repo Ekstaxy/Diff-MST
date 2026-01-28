@@ -19,6 +19,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from mst.utils import load_diffmst, run_diffmst, batch_stereo_peak_normalize, batch_stereo_tracks_peak_normalize
 from mst.loss import AudioFeatureLoss, CLAPFeatureLoss
+from test.utils import normalize_audio, normalize_stem
 import eval_metric
 import matplotlib.pyplot as plt
 
@@ -57,8 +58,6 @@ def compute_clap_similarity(clap_model, audio, text, original_sr=44100):
     return similarity.item()
 
 # CLAP import removed to match eval_loop.py behavior
-
-
 def parse_args():
     parser = argparse.ArgumentParser(description='Batch evaluation of mixing with text prompts')
     
@@ -90,7 +89,8 @@ def parse_args():
     parser.add_argument("--ito_num_step", type=int, default=50, help='Number of ITO steps')
     parser.add_argument("--ito_lr", type=float, default=2e-4, help='Learning rate for ITO optimization')
     parser.add_argument("--clap_checkpoint", type=str, default=None, help='Path to CLAP model checkpoint')
-    
+    parser.add_argument("--prior_loss_weight", type=float, default=0.01, help='Weight for prior loss in ITO')
+    parser.add_argument("--prior_stats_path", type=str, default="test/track_prior_stats.json", help='Path to prior stats JSON for ITO')
     return parser.parse_args()
 
 def make_serializable(obj):
@@ -107,58 +107,6 @@ def make_serializable(obj):
         return obj
     else:
         return str(obj)
-
-def normalize_audio(mix, stems, target_lufs, meter, name="mix"):
-    # mix: (1, 2, len)
-    # stems: (1, 2, num_tracks, len)
-    try:
-        # Check for silence first
-        if mix.abs().max() < 1e-6:
-            print(f"Warning: {name} is silent (max < 1e-6). Skipping normalization.")
-            return mix, stems
-
-        mix_np = mix.squeeze(0).permute(1, 0).cpu().numpy() # (len, 2)
-        mix_lufs_db = meter.integrated_loudness(mix_np)
-        
-        if mix_lufs_db == -float('inf'):
-                print(f"Warning: {name} LUFS is -inf. Applying default gain +26dB.")
-                gain_db = 26.0
-        else:
-            lufs_delta_db = target_lufs - mix_lufs_db
-            gain_db = lufs_delta_db
-        
-        print(f"Normalizing {name}: Current LUFS = {mix_lufs_db:.2f}, Gain = {gain_db:.2f} dB")
-        
-        mix = mix * 10 ** (gain_db / 20)
-        stems = stems * 10 ** (gain_db / 20)
-        return mix, stems
-    except Exception as e:
-        print(f"Warning: Could not normalize {name}: {e}. Applying default gain +26dB.")
-        # Fallback: Input is likely around -48 LUFS, target is -22 LUFS -> +26dB
-        gain_db = 26.0
-        mix = mix * 10 ** (gain_db / 20)
-        stems = stems * 10 ** (gain_db / 20)
-        return mix, stems
-
-def normalize_stem(waveform, target_lufs, meter, name="stem"):
-    # waveform: (2, len)
-    try:
-        if waveform.abs().max() < 1e-6:
-            print(f"Warning: {name} is silent.")
-            return waveform
-        
-        wav_np = waveform.permute(1, 0).cpu().numpy()
-        lufs = meter.integrated_loudness(wav_np)
-        
-        if lufs == -float('inf'):
-            gain_db = 26.0
-        else:
-            gain_db = target_lufs - lufs
-        
-        return waveform * 10 ** (gain_db / 20)
-    except Exception as e:
-        print(f"Warning: Could not normalize {name}: {e}")
-        return waveform * 10 ** (26.0 / 20) # Fallback gain
 
 def compute_audio_metrics(waveform, name_suffix):
     # waveform: (2, len) -> mix to mono for metrics
@@ -179,17 +127,44 @@ def compute_audio_metrics(waveform, name_suffix):
         
     return metrics
 
-mu = None
-baseline_vec = None
-cov = None
-cov_logdet = None
-def logp_x(x):
-    diff = x - baseline_vec                 # 計算參數與平均值的差
-    b = torch.linalg.solve(cov, diff)       # 解線性方程，相當於計算 cov^{-1} * diff
-    norm = diff @ b                         # 計算 Mahalanobis 距離平方: diff^T * cov^{-1} * diff
+def load_prior_stats(prior_stats_path):
+    with open(prior_stats_path, 'r') as f:
+        stats = json.load(f)
+    
+    # 1. Load Mean (Handle 'mu' key from your json)
+    if 'mu' in stats:
+        baseline_vec = torch.tensor(stats['mu'], dtype=torch.float32)
+    else:
+        raise ValueError("Prior stats JSON must contain 'mu' key for mean vector.")
+        
+    # 2. Load Precision Matrix (Inverse Covariance)
+    if 'cov_inv' in stats:
+        cov_inv = torch.tensor(stats['cov_inv'], dtype=torch.float32)
+        # LogDet(Sigma) = -LogDet(Sigma_Inv)
+        cov_logdet = -torch.logdet(cov_inv)
+    else:
+        raise ValueError("Prior stats JSON must contain 'cov_inv' key for inverse covariance matrix.")
+    
+    return baseline_vec, cov_inv, cov_logdet
+
+def logp_x(x, baseline_vec, cov_inv, cov_logdet):
+    diff = x - baseline_vec                 
+    
+    # Use Matrix Multiplication with cov_inv instead of solving linear system
+    # norm = diff^T * cov_inv * diff
+    # (N, D) @ (D, D) -> (N, D)
+    
+    # If x is a batch, we need careful dimensions
+    if x.ndim == 1:
+        norm = diff @ cov_inv @ diff
+    else:
+        # Batch version: diag(diff @ cov_inv @ diff.T)
+        # Efficient way: element-wise multiply and sum
+        norm = (diff @ cov_inv * diff).sum(dim=-1)
+
     return -0.5 * (
         norm + cov_logdet + baseline_vec.shape[0] * math.log(2 * math.pi)
-    ) # 返回對數機率 (Log-Likelihood)
+    )
 
 def main():
     args = parse_args()
@@ -262,6 +237,9 @@ def main():
         print(f"Warning: Could not initialize CLAPFeatureLoss: {e}. ITO might fail.")
         clap_loss_fn = None
 
+    print("Load prior stats for log-prob computation...")
+    baseline_vec, cov_inv, cov_logdet = load_prior_stats(args.prior_stats_path)
+
     all_metrics = []
     all_songs_losses = [] # Store loss history for all songs: list of lists
     
@@ -321,10 +299,6 @@ def main():
         if ref_sr != 44100:
             ref_audio = torchaudio.functional.resample(ref_audio, ref_sr, 44100)
         ref_audio = ref_audio.view(1, 2, -1) # (1, 2, len)
-        
-        # Ensure lengths match for processing (crop to min length or pad)
-        # run_diffmst crops to analysis_len (10s) by default if not specified?
-        # It crops to analysis_len inside.
         
         # Determine target track index early to find active slice
         target_idx = args.target_track_idx
@@ -598,7 +572,7 @@ def main():
                 # Mix to mono for CLAP
                 target_mono = target_audio.mean(dim=1, keepdim=True)
                 
-                loss = clap_loss_fn(target_mono, target=prompt_str, neg_target=neg_str, sample_rate=44100, distance_fn="cosine")
+                loss = clap_loss_fn(target_mono, target=prompt_str, neg_target=neg_str, sample_rate=44100, distance_fn="cosine") - logp_x(p_track, baseline_vec, cov_inv, cov_logdet).mean()*args.prior_loss_weight
                 
                 if not loss.requires_grad:
                     print("!! CRITICAL ERROR: Loss does not require grad. computational graph is broken anywhere.")
