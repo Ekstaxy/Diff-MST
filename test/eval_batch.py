@@ -149,24 +149,61 @@ def load_prior_stats(prior_stats_path):
 
 def flatten_params(param_dict):
     """
-    Flattens a nested dictionary of parameter tensors into a single feature vector.
-    Recursively searches for tensors in sub-dictionaries.
+    Flattens a nested dictionary of params, normalizing them first.
     """
     tensors = []
     
+    # Define ranges based on common Diff-MST/Console configurations
+    # You may need to tweak these if your model uses different limits.
+    RANGES = {
+        'gain_db': (-60.0, 36.0, 'linear'),         # Fader
+        'pan': (0.0, 1.0, 'linear'),                # Stereo Panner
+        'threshold_db': (-60.0, 0.0, 'linear'),     # Compressor
+        'ratio': (1.0, 20.0, 'linear'),             # Compressor (often linear in controller)
+        'attack_ms': (0.1, 1000.0, 'log'),          # Compressor
+        'release_ms': (10.0, 2000.0, 'log'),        # Compressor
+        'makeup_gain_db': (0.0, 24.0, 'linear'),    # Compressor
+        'knee_db': (0.0, 24.0, 'linear'),           # Compressor
+        # EQ Bands
+        'low_shelf_gain_db': (-15.0, 15.0, 'linear'),
+        'low_shelf_cutoff_freq': (20.0, 20000.0, 'log'),
+        'low_shelf_q_factor': (0.1, 10.0, 'log'),
+        'band0_gain_db': (-15.0, 15.0, 'linear'),
+        'band0_cutoff_freq': (20.0, 20000.0, 'log'),
+        'band0_q_factor': (0.1, 10.0, 'log'),
+        'band1_gain_db': (-15.0, 15.0, 'linear'),
+        'band1_cutoff_freq': (20.0, 20000.0, 'log'),
+        'band1_q_factor': (0.1, 10.0, 'log'),
+        'band2_gain_db': (-15.0, 15.0, 'linear'),
+        'band2_cutoff_freq': (20.0, 20000.0, 'log'),
+        'band2_q_factor': (0.1, 10.0, 'log'),
+        'band3_gain_db': (-15.0, 15.0, 'linear'),
+        'band3_cutoff_freq': (20.0, 20000.0, 'log'),
+        'band3_q_factor': (0.1, 10.0, 'log'),
+        'high_shelf_gain_db': (-15.0, 15.0, 'linear'),
+        'high_shelf_cutoff_freq': (20.0, 20000.0, 'log'),
+        'high_shelf_q_factor': (0.1, 10.0, 'log'),
+        'send_db': (-60.0, 0.0, 'linear'),          # FX Send
+    }
+
     def _recursive_collect(d):
-        # Iterate over items. In Python 3.7+, this preserves insertion order.
-        # This order usually matches how the stats were generated.
         for k, v in d.items():
             if isinstance(v, dict):
                 _recursive_collect(v)
             elif torch.is_tensor(v):
-                # Reshape to (Batch, NumTracks, -1) ensuring a feature dimension exists
-                # v shape is typically (Batch, NumTracks) or (Batch, NumTracks, 1)
-                if v.ndim == 2:
-                    flat_v = v.unsqueeze(-1)
+                # Normalize if we know the range
+                if k in RANGES:
+                    min_v, max_v, scale = RANGES[k]
+                    v_norm = normalize_value(v, min_v, max_v, scale)
                 else:
-                    flat_v = v.view(v.shape[0], v.shape[1], -1)
+                    # Fallback or assumed already normalized (like Pan sometimes)
+                    v_norm = v
+                
+                # Reshape
+                if v_norm.ndim == 2:
+                    flat_v = v_norm.unsqueeze(-1)
+                else:
+                    flat_v = v_norm.view(v_norm.shape[0], v_norm.shape[1], -1)
                 tensors.append(flat_v)
 
     _recursive_collect(param_dict)
@@ -174,10 +211,7 @@ def flatten_params(param_dict):
     if not tensors:
         raise ValueError("Parameter dictionary is empty or contains no tensors.")
     
-    # Concatenate along the feature dimension (last dim)
-    # Result shape: (Batch, NumTracks, 27)
     cat_tensor = torch.cat(tensors, dim=-1)
-    
     return cat_tensor
     
 def logp_x(x, baseline_vec, cov_inv, cov_logdet):
