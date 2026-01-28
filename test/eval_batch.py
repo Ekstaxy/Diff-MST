@@ -149,19 +149,36 @@ def load_prior_stats(prior_stats_path):
 
 def flatten_params(param_dict):
     """
-    Flattens a dictionary of parameter tensors into a single feature vector.
+    Flattens a nested dictionary of parameter tensors into a single feature vector.
+    Recursively searches for tensors in sub-dictionaries.
     """
     tensors = []
-    # Note: Dictionary iteration order is insertion-ordered in Python 3.7+.
-    # This assumes stats were generated with the same order.
-    for k, v in param_dict.items():
-        # Flatten feature dimensions (anything after Batch and NumTracks)
-        if torch.is_tensor(v):
-            flat_v = v.view(v.shape[0], v.shape[1], -1)
-            tensors.append(flat_v)
+    
+    def _recursive_collect(d):
+        # Iterate over items. In Python 3.7+, this preserves insertion order.
+        # This order usually matches how the stats were generated.
+        for k, v in d.items():
+            if isinstance(v, dict):
+                _recursive_collect(v)
+            elif torch.is_tensor(v):
+                # Reshape to (Batch, NumTracks, -1) ensuring a feature dimension exists
+                # v shape is typically (Batch, NumTracks) or (Batch, NumTracks, 1)
+                if v.ndim == 2:
+                    flat_v = v.unsqueeze(-1)
+                else:
+                    flat_v = v.view(v.shape[0], v.shape[1], -1)
+                tensors.append(flat_v)
+
+    _recursive_collect(param_dict)
             
     if not tensors:
         raise ValueError("Parameter dictionary is empty or contains no tensors.")
+    
+    # Concatenate along the feature dimension (last dim)
+    # Result shape: (Batch, NumTracks, 27)
+    cat_tensor = torch.cat(tensors, dim=-1)
+    
+    return cat_tensor
     
 def logp_x(x, baseline_vec, cov_inv, cov_logdet):
     diff = x - baseline_vec                 
