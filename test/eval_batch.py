@@ -588,6 +588,7 @@ def main():
                 # Mix to mono for CLAP
                 target_mono = target_audio.mean(dim=1, keepdim=True)
                 
+                print(p_track)
                 loss = clap_loss_fn(target_mono, target=prompt_str, neg_target=neg_str, sample_rate=44100, distance_fn="cosine") - logp_x(flatten_params(p_track), baseline_vec, cov_inv, cov_logdet).mean()*args.prior_loss_weight
                 
                 if not loss.requires_grad:
