@@ -147,6 +147,22 @@ def load_prior_stats(prior_stats_path):
     
     return baseline_vec, cov_inv, cov_logdet
 
+def flatten_params(param_dict):
+    """
+    Flattens a dictionary of parameter tensors into a single feature vector.
+    """
+    tensors = []
+    # Note: Dictionary iteration order is insertion-ordered in Python 3.7+.
+    # This assumes stats were generated with the same order.
+    for k, v in param_dict.items():
+        # Flatten feature dimensions (anything after Batch and NumTracks)
+        if torch.is_tensor(v):
+            flat_v = v.view(v.shape[0], v.shape[1], -1)
+            tensors.append(flat_v)
+            
+    if not tensors:
+        raise ValueError("Parameter dictionary is empty or contains no tensors.")
+    
 def logp_x(x, baseline_vec, cov_inv, cov_logdet):
     diff = x - baseline_vec                 
     
@@ -572,7 +588,7 @@ def main():
                 # Mix to mono for CLAP
                 target_mono = target_audio.mean(dim=1, keepdim=True)
                 
-                loss = clap_loss_fn(target_mono, target=prompt_str, neg_target=neg_str, sample_rate=44100, distance_fn="cosine") - logp_x(p_track, baseline_vec, cov_inv, cov_logdet).mean()*args.prior_loss_weight
+                loss = clap_loss_fn(target_mono, target=prompt_str, neg_target=neg_str, sample_rate=44100, distance_fn="cosine") - logp_x(flatten_params(p_track), baseline_vec, cov_inv, cov_logdet).mean()*args.prior_loss_weight
                 
                 if not loss.requires_grad:
                     print("!! CRITICAL ERROR: Loss does not require grad. computational graph is broken anywhere.")
