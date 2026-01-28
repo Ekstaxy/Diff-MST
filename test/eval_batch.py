@@ -19,7 +19,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from mst.utils import load_diffmst, run_diffmst, batch_stereo_peak_normalize, batch_stereo_tracks_peak_normalize
 from mst.loss import AudioFeatureLoss, CLAPFeatureLoss
-from test.utils import normalize_audio, normalize_stem
+from utils import normalize_audio, normalize_stem
 import eval_metric
 import matplotlib.pyplot as plt
 
