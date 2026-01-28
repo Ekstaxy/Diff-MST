@@ -147,6 +147,27 @@ def load_prior_stats(prior_stats_path):
     
     return baseline_vec, cov_inv, cov_logdet
 
+def normalize_value(val, min_val, max_val, scale='linear'):
+    """
+    Invert the mapping: 
+    Linear: y = min + x * (max - min)  =>  x = (y - min) / (max - min)
+    Log:    y = min * (max/min)^x      =>  x = log(y/min) / log(max/min)
+    """
+    if scale == 'linear':
+        norm = (val - min_val) / (max_val - min_val)
+    elif scale == 'log':
+        # Ensure values are positive for log calculations
+        # Clamp input val to range [min_val, max_val] to avoid NaNs
+        val_clamped = torch.clamp(val, min=min_val, max=max_val)
+        
+        # Avoid division by zero if val is 0 (though min_val should be > 0 for log)
+        numerator = torch.log(val_clamped / min_val)
+        denominator = math.log(max_val / min_val) # scalar log is fine here
+        norm = numerator / denominator
+    
+    # Clamp to [0, 1] to ensure valid probabilities for the prior
+    return torch.clamp(norm, 0.0, 1.0)
+
 def flatten_params(param_dict):
     """
     Flattens a nested dictionary of params, normalizing them first.
