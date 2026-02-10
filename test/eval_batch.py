@@ -548,6 +548,7 @@ def main():
                 # Effective Target R is at [effective_target_idx + num_tracks] if we assume planar, 
                 # but let's see what happens with the Interleaved View:
                 
+                effective_target_idx = target_idx
                 dbg_idx_L = effective_target_idx
                 dbg_idx_R = effective_target_idx + num_tracks
                 
