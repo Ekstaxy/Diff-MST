@@ -339,6 +339,7 @@ def main():
         
         # Find tracks
         track_filepaths = glob.glob(os.path.join(song_dir, "*.wav"))
+        track_filepaths = sorted(track_filepaths) # Ensure consistent order
         if len(track_filepaths) < 2:
             print("Not enough tracks, skipping.")
             continue
@@ -390,7 +391,28 @@ def main():
         
         # Determine target track index early to find active slice
         target_idx = args.target_track_idx
-        
+
+        # === Auto-Detect Vocal from YAML (Override -2) ===
+        if target_idx == -2:
+            # Check splits
+            song_meta = None
+            for split in ['val', 'test', 'train']:
+                if split in dataset_meta and song_rel_path in dataset_meta[split]:
+                    song_meta = dataset_meta[split][song_rel_path]
+                    break
+            
+            if song_meta is not None:
+                # Find vocal in sorted lists
+                for i, track_path in enumerate(track_filepaths):
+                    fname = os.path.basename(track_path)
+                    if fname in song_meta:
+                        label = song_meta[fname].lower()
+                        # Keywords for vocal
+                        if any(kw in label for kw in ['singer', 'vocal', 'rapper', 'voice', 'vox']):
+                            print(f"   [Auto-Detect] Found Vocal track at index {i}: {fname} ({label})")
+                            target_idx = i
+                            break
+
         # Determine if we need automatic selection (-2)
         auto_select_track = (target_idx == -2)
         
@@ -462,8 +484,8 @@ def main():
         track_energies = tracks_slice.squeeze(0).pow(2).mean(dim=-1) # (num_tracks,)
         
         if auto_select_track:
-             target_idx = torch.argmax(track_energies).item()
-             print(f"Auto-selected highest energy track index: {target_idx}")
+            target_idx = torch.argmax(track_energies).item()
+            print(f"Auto-selected highest energy track index: {target_idx}")
         
         # We must include target_idx if it's a specific track
         selected_indices = []
@@ -539,31 +561,7 @@ def main():
                 
             else:
                 # Encode Separate Tracks
-                # [DEBUG START] Verify Indexing Logic by saving corresponding audio
-                print("\n[DEBUG] Verifying Index Logic via Audio output...")
-                debug_audio_view = pred_tracks_base.clone().view(bs, num_tracks * 2, -1) # Mimic the "Bad" view
-                
-                # Mimic the indexing logic derived from embedding indices
-                # Effective Target L is at [effective_target_idx]
-                # Effective Target R is at [effective_target_idx + num_tracks] if we assume planar, 
-                # but let's see what happens with the Interleaved View:
-                
-                effective_target_idx = target_idx
-                dbg_idx_L = effective_target_idx
-                dbg_idx_R = effective_target_idx + num_tracks
-                
-                print(f"[DEBUG] Saving debug audio chunks from indices {dbg_idx_L} and {dbg_idx_R}...")
-                
-                # Save L
-                debug_audio_L = debug_audio_view[0, dbg_idx_L, :].unsqueeze(0) # (1, Len)
-                torchaudio.save(output_dir / f"DEBUG_check_L_idx{dbg_idx_L}.wav", debug_audio_L, 44100)
-                
-                # Save R
-                debug_audio_R = debug_audio_view[0, dbg_idx_R, :].unsqueeze(0) # (1, Len)
-                torchaudio.save(output_dir / f"DEBUG_check_R_idx{dbg_idx_R}.wav", debug_audio_R, 44100)
-                print(f"[DEBUG] Saved DEBUG_check_L.wav and DEBUG_check_R.wav to {output_dir}\n")
-                # [DEBUG END]
-
+                # 確認這行是對的
                 full_input = pred_tracks_base.clone().view(bs, num_tracks * 2, -1)
                 full_base_embedding = model.mix_encoder(full_input)
                 # full_base_embedding: (bs, 2*num_tracks, embed_dim)
