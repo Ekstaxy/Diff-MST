@@ -537,6 +537,7 @@ def main():
                 fit_embedding = torch.nn.Parameter(ito_embedding, requires_grad=True)
                 optimizer = torch.optim.RAdam([fit_embedding], lr=args.ito_lr)
                 
+            else:
                 # Encode Separate Tracks
                 # [DEBUG START] Verify Indexing Logic by saving corresponding audio
                 print("\n[DEBUG] Verifying Index Logic via Audio output...")
