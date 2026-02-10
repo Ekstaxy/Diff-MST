@@ -526,11 +526,7 @@ def main():
             prompt_str = args.text_prompt[0] 
             neg_str = args.neg_prompt[0] if args.neg_prompt is not None else None
             bs, num_tracks, seq_len = pred_tracks_base.shape[0], pred_tracks_base.shape[2], pred_tracks_base.shape[3]
-            
-            # --- WHOLE MIX ITO ADJUSTMENT ---
-            # If target_idx == -1 (Master), we want to optimize the MIX embedding, not track embeddings.
-            # But full_base_embedding above is computed from SEPARATE tracks. 
-            # If we want to optimize the mix, we should encode the MIX.
+            print(f"pred_tracks_base shape: {pred_tracks_base.shape}")
             
             if is_master_control:
 
@@ -541,8 +537,31 @@ def main():
                 fit_embedding = torch.nn.Parameter(ito_embedding, requires_grad=True)
                 optimizer = torch.optim.RAdam([fit_embedding], lr=args.ito_lr)
                 
-            else:
                 # Encode Separate Tracks
+                # [DEBUG START] Verify Indexing Logic by saving corresponding audio
+                print("\n[DEBUG] Verifying Index Logic via Audio output...")
+                debug_audio_view = pred_tracks_base.clone().view(bs, num_tracks * 2, -1) # Mimic the "Bad" view
+                
+                # Mimic the indexing logic derived from embedding indices
+                # Effective Target L is at [effective_target_idx]
+                # Effective Target R is at [effective_target_idx + num_tracks] if we assume planar, 
+                # but let's see what happens with the Interleaved View:
+                
+                dbg_idx_L = effective_target_idx
+                dbg_idx_R = effective_target_idx + num_tracks
+                
+                print(f"[DEBUG] Saving debug audio chunks from indices {dbg_idx_L} and {dbg_idx_R}...")
+                
+                # Save L
+                debug_audio_L = debug_audio_view[0, dbg_idx_L, :].unsqueeze(0) # (1, Len)
+                torchaudio.save(output_dir / f"DEBUG_check_L_idx{dbg_idx_L}.wav", debug_audio_L, 44100)
+                
+                # Save R
+                debug_audio_R = debug_audio_view[0, dbg_idx_R, :].unsqueeze(0) # (1, Len)
+                torchaudio.save(output_dir / f"DEBUG_check_R_idx{dbg_idx_R}.wav", debug_audio_R, 44100)
+                print(f"[DEBUG] Saved DEBUG_check_L.wav and DEBUG_check_R.wav to {output_dir}\n")
+                # [DEBUG END]
+
                 full_input = pred_tracks_base.clone().view(bs, num_tracks * 2, -1)
                 full_base_embedding = model.mix_encoder(full_input)
                 # full_base_embedding: (bs, 2*num_tracks, embed_dim)
