@@ -30,6 +30,10 @@ def compute_clap_similarity(clap_model, audio, text, original_sr=44100):
     # Ensure tensor
     if not torch.is_tensor(audio):
         audio = torch.tensor(audio)
+
+    # Move to same device as model
+    device = next(clap_model.parameters()).device
+    audio = audio.to(device)
         
     # Mix to mono if stereo
     if audio.dim() == 2:
@@ -44,8 +48,6 @@ def compute_clap_similarity(clap_model, audio, text, original_sr=44100):
     
     # Get embeddings
     with torch.no_grad():
-        # Ensure model is on same device as audio (or vice versa)
-        # In this script, everything is CPU
         audio_embed = clap_model.get_audio_embedding_from_data(x=audio, use_tensor=True)
         text_embed = clap_model.get_text_embedding([text], use_tensor=True)
         
@@ -61,6 +63,7 @@ def compute_clap_similarity(clap_model, audio, text, original_sr=44100):
 def parse_args():
     parser = argparse.ArgumentParser(description='Batch evaluation of mixing with text prompts')
     
+    parser.add_argument("--device", type=str, default="cpu", help="Device to run the model on (e.g., 'cpu' or 'cuda')")
     # Model configs
     parser.add_argument("--config", type=str, required=True, help='Path to model config (e.g. configs/models/naive.yaml)')
     parser.add_argument("--checkpoint", type=str, required=True, help='Path to model checkpoint')
@@ -110,18 +113,21 @@ def make_serializable(obj):
 
 def compute_audio_metrics(waveform, name_suffix):
     # waveform: (2, len) -> mix to mono for metrics
-    # mono = waveform.mean(dim=0).numpy()
+    # Ensure CPU for numpy conversion
+    waveform_np = waveform.detach().cpu().numpy()
+    mean_np = waveform.mean(dim=0).detach().cpu().numpy()
+    
     metrics = {
-        f"loudness_{name_suffix}": eval_metric.get_loudness(waveform.numpy()),
-        f"panning_{name_suffix}": eval_metric.get_panning(waveform.numpy()),
-        f"mid_side_ratio_{name_suffix}": eval_metric.get_mid_side_ratio(waveform.numpy()),
-        f"spectral_centroid_{name_suffix}": eval_metric.get_spectral_centroid(waveform.mean(dim=0).numpy()),
-        f"band_ratio_{name_suffix}": eval_metric.get_band_ratio(waveform.mean(dim=0).numpy()),
-        f"crest_factor_{name_suffix}": eval_metric.get_crest_factor(waveform.mean(dim=0).numpy())
+        f"loudness_{name_suffix}": eval_metric.get_loudness(waveform_np),
+        f"panning_{name_suffix}": eval_metric.get_panning(waveform_np),
+        f"mid_side_ratio_{name_suffix}": eval_metric.get_mid_side_ratio(waveform_np),
+        f"spectral_centroid_{name_suffix}": eval_metric.get_spectral_centroid(mean_np),
+        f"band_ratio_{name_suffix}": eval_metric.get_band_ratio(mean_np),
+        f"crest_factor_{name_suffix}": eval_metric.get_crest_factor(mean_np)
     }
     
     # Add Multi-band Spectral Centroid
-    mb_centroids = eval_metric.get_multiband_spectral_centroid(waveform.mean(dim=0).numpy())
+    mb_centroids = eval_metric.get_multiband_spectral_centroid(mean_np)
     for band, val in mb_centroids.items():
         metrics[f"sc_{band}_{name_suffix}"] = val
         
@@ -309,24 +315,30 @@ def main():
     
     # Load model
     print("Loading model...")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Using device: {device}")
+
     model, mix_console = load_diffmst(args.config, args.checkpoint)
-    model = model.to("cpu")
-    mix_console = mix_console.to("cpu")
+    model = model.to(device)
+    mix_console = mix_console.to(device)
     
     meter = pyln.Meter(44100)
     
     # Initialize AudioFeatureLoss
-    af_loss_fn = AudioFeatureLoss([0.1, 0.001, 1.0, 1.0, 0.1], 44100)
+    af_loss_fn = AudioFeatureLoss([0.1, 0.001, 1.0, 1.0, 0.1], 44100).to(device)
     
     # Initialize CLAP Loss for ITO
     try:
-        clap_loss_fn = CLAPFeatureLoss(ckpt_path=args.clap_checkpoint)
+        clap_loss_fn = CLAPFeatureLoss(ckpt_path=args.clap_checkpoint).to(device)
     except Exception as e:
         print(f"Warning: Could not initialize CLAPFeatureLoss: {e}. ITO might fail.")
         clap_loss_fn = None
 
     print("Load prior stats for log-prob computation...")
     baseline_vec, cov_inv, cov_logdet = load_prior_stats(args.prior_stats_path)
+    baseline_vec = baseline_vec.to(device)
+    cov_inv = cov_inv.to(device)
+    cov_logdet = cov_logdet.to(device)
 
     all_metrics = []
     all_songs_losses = [] # Store loss history for all songs: list of lists
@@ -376,7 +388,7 @@ def main():
             )
         
         tracks_tensor = torch.cat(tracks, dim=0)
-        tracks_tensor = tracks_tensor.view(1, -1, max_length) # (1, num_tracks, len)
+        tracks_tensor = tracks_tensor.view(1, -1, max_length).to(device) # (1, num_tracks, len)
         
         # Load reference mix
         if args.custom_reference is not None:
@@ -387,7 +399,7 @@ def main():
         print(f"Loaded reference mix from {mix_filepath}, SR={ref_sr}, Shape={ref_audio.shape}")
         if ref_sr != 44100:
             ref_audio = torchaudio.functional.resample(ref_audio, ref_sr, 44100)
-        ref_audio = ref_audio.view(1, 2, -1) # (1, 2, len)
+        ref_audio = ref_audio.view(1, 2, -1).to(device) # (1, 2, len)
         
         # Determine target track index early to find active slice
         target_idx = args.target_track_idx
