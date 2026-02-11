@@ -848,24 +848,24 @@ def main():
         song_out_dir.mkdir(exist_ok=True)
         
         # Save Mixes
-        torchaudio.save(song_out_dir / "mix_baseline.wav", pred_mix_base.squeeze(0), 44100)
+        torchaudio.save(song_out_dir / "mix_baseline.wav", pred_mix_base.squeeze(0).cpu(), 44100)
         if args.ito_num_step > 0 and pred_mix_text is not None:
-            torchaudio.save(song_out_dir / "mix_ito_text.wav", pred_mix_text.squeeze(0), 44100)
-        torchaudio.save(song_out_dir / "mix_sum.wav", sum_mix.squeeze(0), 44100)
+            torchaudio.save(song_out_dir / "mix_ito_text.wav", pred_mix_text.squeeze(0).cpu(), 44100)
+        torchaudio.save(song_out_dir / "mix_sum.wav", sum_mix.squeeze(0).cpu(), 44100)
         
         # Normalize stems for audibility (Note: this changes relative mix balance in the saved file)
         target_stem_base = normalize_stem(target_stem_base, args.target_lufs, meter, "target_base")
         sum_others_base = normalize_stem(sum_others_base, args.target_lufs, meter, "others_base")
 
-        torchaudio.save(song_out_dir / "target_baseline.wav", target_stem_base, 44100)
-        torchaudio.save(song_out_dir / "others_baseline.wav", sum_others_base, 44100)
+        torchaudio.save(song_out_dir / "target_baseline.wav", target_stem_base.cpu(), 44100)
+        torchaudio.save(song_out_dir / "others_baseline.wav", sum_others_base.cpu(), 44100)
         
         if args.ito_num_step > 0 and pred_mix_text is not None:
             target_stem_text = normalize_stem(target_stem_text, args.target_lufs, meter, "target_text")
             sum_others_text = normalize_stem(sum_others_text, args.target_lufs, meter, "others_text")
 
-            torchaudio.save(song_out_dir / "target_ito_text.wav", target_stem_text, 44100)
-            torchaudio.save(song_out_dir / "others_ito_text.wav", sum_others_text, 44100)
+            torchaudio.save(song_out_dir / "target_ito_text.wav", target_stem_text.cpu(), 44100)
+            torchaudio.save(song_out_dir / "others_ito_text.wav", sum_others_text.cpu(), 44100)
             
         metrics["song"] = song_name
         all_metrics.append(metrics)
