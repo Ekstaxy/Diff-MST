@@ -676,7 +676,7 @@ def main():
                     # prev_track_param_dict=prev_t,
                     # prev_fx_bus_param_dict=prev_f,
                     # prev_master_bus_param_dict=prev_m,
-                    use_master_bus=True
+                    use_master_bus=is_master_control
                 )
                 
                 (pred_mix_ito, pred_tracks_ito, p_track, p_fx, p_master) = result
