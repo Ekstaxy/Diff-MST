@@ -29,7 +29,7 @@ idna==3.7
 importlib_resources==6.4.0
 Jinja2==3.1.4
 joblib==1.4.2
-jsonargparse==4.31.0
+jsonargparse==4.35.0
 kiwisolver==1.4.5
 lazy_loader==0.4
 librosa==0.10.2.post1
