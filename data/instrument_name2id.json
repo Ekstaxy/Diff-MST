@@ -142,5 +142,7 @@
     "xylophone": 141,
     "woodwind": 142,
     "sitar": 143,
-    "Main System": 144
+    "Main System": 144,
+    "drums" : 145,
+    "other": 146
 }
