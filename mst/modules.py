@@ -1216,7 +1216,7 @@ class TransformerController(torch.nn.Module):
             
             # Recombine to (bs, 2, embed_dim)
             mix_embeds = torch.cat([left_mix_embed, right_mix_embed], dim=1)
-
+            
         # apply learned embeddings to both input embeddings
         track_embeds = track_embeds + self.track_embedding.repeat(bs, num_tracks, 1)
         mix_embeds = mix_embeds + self.mix_embedding.repeat(bs, 1, 1)
