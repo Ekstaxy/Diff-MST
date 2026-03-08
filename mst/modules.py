@@ -10,11 +10,8 @@ import shutil
 import soundfile as sf
 
 # Import audio_separator for BS-RoFormer usage
-try:
-    from audio_separator.separator import Separator
-except ImportError:
-    print("Warning: audio_separator not installed. Source separation will fail.")
-    Separator = None
+from audio_separator.separator import Separator
+
 
 from typing import Callable, Optional, List
 from torchaudio.pipelines import HDEMUCS_HIGH_MUSDB_PLUS
