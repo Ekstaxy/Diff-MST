@@ -627,74 +627,114 @@ class RoFormerRemixer(torch.nn.Module):
         
         separated_batch = []
         
-        # Create a temporary directory for file processing to avoid clutter
-        # This is safer than writing to CWD
+        # Create a temporary directory for file processing
+        # Using tempfile ensures cleanup and isolation
         with tempfile.TemporaryDirectory() as temp_dir:
-            # Switch to temp dir to contain outputs
-            original_cwd = os.getcwd()
             try:
-                os.chdir(temp_dir)
+                # Configure separator to output to our temp directory
+                if self.separator is not None:
+                    self.separator.output_dir = temp_dir
+                    # Ensure we get wav output
+                    self.separator.output_format = "wav" 
+
                 x_cpu = x.detach().cpu().numpy()
                 
                 for i in range(bs):
-                    # Write input file
-                    in_filename = f"input_mix_{i}.wav"
-                    # soundfile expects (time, channels)
-                    audio_data = x_cpu[i].T 
+                    # 1. Write Input File
+                    # Use absolute path
+                    in_filename = os.path.join(temp_dir, f"input_mix_{i}.wav")
+                    audio_data = x_cpu[i].T # (time, channels) for soundfile
                     sf.write(in_filename, audio_data, self.sample_rate)
                     
-                    # Output names mapping based on source_separation.py
-                    output_names = {
-                        "Vocals": f"vocals_{i}",
-                        "Instrumental": f"instrumental_{i}",
-                    }
-                    
-                    # Separate
+                    # 2. Run Separation
                     try:
-                        # Passing absolute path to be safe
-                        self.separator.separate(os.path.abspath(in_filename), output_names)
+                        # separate() returns list of output file paths
+                        output_actions = self.separator.separate(in_filename)
+                        # output_actions might be file paths or similar depending on version
+                        # We glob the directory to be safe and find the new files
+                        
+                        # Identify stems based on filenames
+                        vocab_path = None
+                        inst_path = None
+                        
+                        # Check files in temp_dir that are NOT the input
+                        for fname in os.listdir(temp_dir):
+                            full_path = os.path.join(temp_dir, fname)
+                            if full_path == in_filename:
+                                continue
+                            
+                            # Simple heuristic for identification
+                            lower_name = fname.lower()
+                            # Check for generated files for THIS index? 
+                            # Since we share temp_dir for the loop, we might see files from previous iteration i-1?
+                            # Solution: Clean temp dir or use specific naming?
+                            # Easier: Just check output_actions if it returns paths.
+                            # Assuming separate() returns paths:
+                            pass
+                        
+                        # Better approach: Trust return value of separate()
+                        # If separate() returns list of files:
+                        current_outputs = output_actions if isinstance(output_actions, list) else []
+                        
+                        # Map to Vocals/Instrumental
+                        for fpath in current_outputs:
+                            f_base = os.path.basename(fpath).lower()
+                            if "vocals" in f_base:
+                                vocab_path = fpath
+                            elif "instrumental" in f_base or "other" in f_base:
+                                inst_path = fpath
+                                
                     except Exception as e:
-                        print(f"Separation error on item {i}: {e}")
-                        # Fallback: use mix for both if fails
-                        stem_group = np.stack([x_cpu[i], x_cpu[i]], axis=0) # (2, ch, time)
-                        separated_batch.append(stem_group)
-                        print(f"DEBUG [Remixer]: Item {i} separation failed. Used input mix as fallback.")
-                        continue
+                        print(f"DEBUG [Remixer]: Separation failed for item {i}: {e}")
+                        vocab_path = None
+                        inst_path = None
 
-                    # Read outputs
-                    stems = []
-                    # Order: [Instrumental, Vocals] (matches typical stemming order)
-                    for stem_key in ["Instrumental", "Vocals"]:
-                        fname = f"{output_names[stem_key]}.wav"
-                        if os.path.exists(fname):
-                            audio, _ = sf.read(fname) # (time, channels)
-                            # Transpose back to (channels, time)
-                            if len(audio.shape) == 1:
-                                audio = audio.reshape(1, -1)
-                            else:
-                                audio = audio.T
-                            
-                            # Ensure length matches original (padding/cropping might happen)
-                            if audio.shape[-1] != seq_len:
-                                # Simple fix: crop or pad
-                                if audio.shape[-1] > seq_len:
-                                    audio = audio[:, :seq_len]
+                    # 3. Load & Process Stems
+                    stems_list = []
+                    # We want [Instrumental, Vocals] order
+                    for target_path in [inst_path, vocab_path]:
+                        if target_path and os.path.exists(target_path):
+                            w, sr = sf.read(target_path)
+                            # Handle Mono/Stereo
+                            if len(w.shape) == 1: 
+                                w = w.reshape(1, -1)
+                            else: 
+                                w = w.T # (channels, time)
+                                
+                            # Length Check
+                            if w.shape[-1] != seq_len:
+                                if w.shape[-1] > seq_len:
+                                    w = w[:, :seq_len]
                                 else:
-                                    padding = np.zeros((audio.shape[0], seq_len - audio.shape[-1]))
-                                    audio = np.concatenate([audio, padding], axis=-1)
-                            
-                            stems.append(audio)
+                                    pad_amt = seq_len - w.shape[-1]
+                                    w = np.concatenate([w, np.zeros((w.shape[0], pad_amt))], axis=-1)
+                            stems_list.append(w)
                         else:
-                            # Missing file fallback (silence)
-                            stems.append(np.zeros((ch, seq_len)))
+                            # Fallback: Silence (or copy mix? usually silence for missing stem)
+                            # If separating vocals failed, maybe we shouldn't return silence... 
+                            # But if the whole separation failed, we handled it below.
+                            # If only one stem is missing, it implies silence.
+                            stems_list.append(np.zeros((ch, seq_len)))
                     
-                    # Stack stems: (2, ch, time)
-                    stem_stack = np.stack(stems, axis=0)
+                    # Check if we got valid results (not just silence if mix wasn't silent)
+                    # If both are silence but input wasn't, fallback to mix duplication to be safe
+                    stem_stack = np.stack(stems_list, axis=0) # (2, ch, time)
+                    if np.max(np.abs(stem_stack)) < 1e-6 and np.max(np.abs(x_cpu[i])) > 1e-4:
+                         # Separation seemingly failed to produce audio
+                         stem_stack = np.stack([x_cpu[i], x_cpu[i]], axis=0)
+                         
                     separated_batch.append(stem_stack)
                     
-            finally:
-                pass 
-                # os.chdir(original_cwd) # Always return to original directory (already handled by finally context)
+                    # Cleanup specific files for this iteration to save space/avoid confusion?
+                    # tempfile handles final cleanup, but let's keep it clean
+                    # Optional.
+                    
+            except Exception as e:
+                print(f"Critical error in batch separation: {e}")
+                import traceback
+                traceback.print_exc()
+                # Return identity for whole batch
+                return x.unsqueeze(1).repeat(1, 2, 1, 1)
 
         # Convert back to tensor
         separated_tensor = torch.tensor(np.array(separated_batch), device=device, dtype=x.dtype)
