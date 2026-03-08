@@ -8,9 +8,13 @@ import tempfile
 import os
 import shutil
 import soundfile as sf
+import logging
 
 # Import audio_separator for BS-RoFormer usage
 from audio_separator.separator import Separator
+
+# Suppress verbose info logs from audio_separator
+logging.getLogger("audio_separator").setLevel(logging.WARNING)
 
 
 from typing import Callable, Optional, List
