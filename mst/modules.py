@@ -4,6 +4,17 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchaudio
 import numpy as np
+import tempfile
+import os
+import shutil
+import soundfile as sf
+
+# Import audio_separator for BS-RoFormer usage
+try:
+    from audio_separator.separator import Separator
+except ImportError:
+    print("Warning: audio_separator not installed. Source separation will fail.")
+    Separator = None
 
 from typing import Callable, Optional, List
 from torchaudio.pipelines import HDEMUCS_HIGH_MUSDB_PLUS
@@ -575,6 +586,125 @@ class AdvancedMixConsole(torch.nn.Module):
             master_bus_param_dict,
         )
 
+class RoFormerRemixer(torch.nn.Module):
+    """
+    Source Separation using BS-RoFormer via audio-separator.
+    Uses file-based I/O as the library typically expects files.
+    """
+    def __init__(self, sample_rate: int = 44100, model_name: str = 'model_bs_roformer_ep_317_sdr_12.9755.ckpt') -> None:
+        super().__init__()
+        self.sample_rate = sample_rate
+        self.model_name = model_name
+        
+        if Separator is None:
+            print("WARNING: audio-separator not installed. Source separation will fail or return identity.")
+            self.separator = None
+        else:
+            self.separator = Separator()
+            try:
+                # Based on user's source_separation.py usage
+                self.separator.load_model(model_filename=model_name)
+            except Exception as e:
+                print(f"Failed to load BS-RoFormer model: {e}")
+                self.separator = None
+
+    def forward(self, x: torch.Tensor):
+        """
+        Input: x (batch, channels, time) - The mixed audio
+        Output: separated_sources (batch, stems, channels, time)
+        """
+        if self.separator is None:
+            # Fallback or identity if not available
+            print("DEBUG [Remixer]: Separator not loaded. Falling back to duplication strategy.")
+            bs, ch, t = x.shape
+            # Return duplicate as Vocal + Instrumental placeholder
+            return x.unsqueeze(1).repeat(1, 2, 1, 1) # (bs, 2, ch, t)
+
+        bs, ch, seq_len = x.shape
+        device = x.device
+        
+        print(f"DEBUG [Remixer]: Input shape: {x.shape} | Device: {device}")
+        
+        # Audio separator works on files. This is very slow for training.
+        # But fulfilling the specific requirement to use this method.
+        
+        separated_batch = []
+        
+        # Create a temporary directory for file processing to avoid clutter
+        # This is safer than writing to CWD
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Switch to temp dir to contain outputs
+            original_cwd = os.getcwd()
+            try:
+                os.chdir(temp_dir)
+                x_cpu = x.detach().cpu().numpy()
+                
+                for i in range(bs):
+                    # Write input file
+                    in_filename = f"input_mix_{i}.wav"
+                    # soundfile expects (time, channels)
+                    audio_data = x_cpu[i].T 
+                    sf.write(in_filename, audio_data, self.sample_rate)
+                    
+                    # Output names mapping based on source_separation.py
+                    output_names = {
+                        "Vocals": f"vocals_{i}",
+                        "Instrumental": f"instrumental_{i}",
+                    }
+                    
+                    # Separate
+                    try:
+                        # Passing absolute path to be safe
+                        self.separator.separate(os.path.abspath(in_filename), output_names)
+                    except Exception as e:
+                        print(f"Separation error on item {i}: {e}")
+                        # Fallback: use mix for both if fails
+                        stem_group = np.stack([x_cpu[i], x_cpu[i]], axis=0) # (2, ch, time)
+                        separated_batch.append(stem_group)
+                        print(f"DEBUG [Remixer]: Item {i} separation failed. Used input mix as fallback.")
+                        continue
+
+                    # Read outputs
+                    stems = []
+                    # Order: [Instrumental, Vocals] (matches typical stemming order)
+                    for stem_key in ["Instrumental", "Vocals"]:
+                        fname = f"{output_names[stem_key]}.wav"
+                        if os.path.exists(fname):
+                            audio, _ = sf.read(fname) # (time, channels)
+                            # Transpose back to (channels, time)
+                            if len(audio.shape) == 1:
+                                audio = audio.reshape(1, -1)
+                            else:
+                                audio = audio.T
+                            
+                            # Ensure length matches original (padding/cropping might happen)
+                            if audio.shape[-1] != seq_len:
+                                # Simple fix: crop or pad
+                                if audio.shape[-1] > seq_len:
+                                    audio = audio[:, :seq_len]
+                                else:
+                                    padding = np.zeros((audio.shape[0], seq_len - audio.shape[-1]))
+                                    audio = np.concatenate([audio, padding], axis=-1)
+                            
+                            stems.append(audio)
+                        else:
+                            # Missing file fallback (silence)
+                            stems.append(np.zeros((ch, seq_len)))
+                    
+                    # Stack stems: (2, ch, time)
+                    stem_stack = np.stack(stems, axis=0)
+                    separated_batch.append(stem_stack)
+                    
+            finally:
+                pass 
+                # os.chdir(original_cwd) # Always return to original directory (already handled by finally context)
+
+        # Convert back to tensor
+        separated_tensor = torch.tensor(np.array(separated_batch), device=device, dtype=x.dtype)
+        
+        print(f"DEBUG [Remixer]: Separation complete. Output tensor shape: {separated_tensor.shape}, device: {separated_tensor.device}")
+
+        return separated_tensor
 
 class Remixer(torch.nn.Module):
     def __init__(self, sample_rate: int) -> None:

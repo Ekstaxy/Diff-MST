@@ -7,7 +7,7 @@ trainer:
     init_args:
       project: DiffMST_Retrain
       # change to the directory where you want to save wandb logs
-      save_dir: /mnt/gestalt/home/rakec/output/diff-mst/dual-clap/stage1
+      save_dir: /content
   enable_checkpointing: true
   callbacks:
     - class_path: mst.callbacks.audio.LogAudioCallback

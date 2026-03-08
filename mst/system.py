@@ -10,6 +10,7 @@ from typing import Callable
 from mst.mixing import knowledge_engineering_mix
 from mst.utils import batch_stereo_peak_normalize, batch_stereo_tracks_peak_normalize
 from mst.fx_encoder import FXencoder
+from mst.modules import RoFormerRemixer
 import pyloudnorm as pyln
 
 
@@ -54,6 +55,10 @@ class System(pl.LightningModule):
         self.meter = pyln.Meter(44100)
         #self.warmup = warmup
 
+        # Initialize BS-RoFormer Source Separator
+        self.remixer = RoFormerRemixer(sample_rate=44100)
+        self.remixer.eval()
+        self.remixer.requires_grad_(False)
 
         self.save_hyperparameters(ignore=["model", "mix_console", "mix_fn", "loss"])
 
@@ -173,6 +178,41 @@ class System(pl.LightningModule):
                 print(ref_track_param_dict)
                 raise ValueError("Found nan in ref_mix")
             
+            # --- SOURCE SEPARATION STEP (BS-RoFormer) ---
+            with torch.no_grad():
+                # Perform separation on the generated random mix (Ground Truth)
+                # Input: ref_mix (bs, 2, seq_len)
+                # RoFormerRemixer uses the logic from source_separation.py internally
+                # Output: sources (bs, 2, 2, seq_len) -> [instrumental, vocals] if configured with those output names
+                sources = self.remixer(ref_mix)
+
+                # DEBUG: Print shape after separation
+                print(f"DEBUG [Common Step]: Separated sources shape: {sources.shape}")
+
+                # IMPORTANT: Reshape separated stems to be the input 'tracks'
+                # Treating each stem as a stereo track.
+                # Here we flatten 2 stereo stems into 4 mono tracks
+                # Shape: (bs, 4, seq_len)
+                # NOTE: Ensure your model config is set to 'num_tracks: 4' (or 8 if you want stereo separation)
+                
+                # To match 8 tracks (if you want more flexibility/dummy tracks):
+                # separated_tracks = sources.view(bs, 4, seq_len)
+                
+                # If your previous setup used 8 tracks, you might need to adjust.
+                # Assuming simple flattening:
+                bs, stems, ch, time = sources.shape # (bs, 2, 2, time)
+                separated_tracks = sources.view(bs, stems * ch, time) # (bs, 4, time)
+                
+                # If the model strictly requires 8 tracks (common in this repo), repeat or pad.
+                if num_tracks == 8 and separated_tracks.shape[1] == 4:
+                     print("DEBUG: Repeating 4 tracks to 8 tracks to match model input")
+                     separated_tracks = separated_tracks.repeat(1, 2, 1) # Simply duplicate to fill 8 tracks
+                
+                # Overwrite original tracks with separated stems
+                tracks = separated_tracks
+                print(f"DEBUG: Final 'tracks' input shape: {tracks.shape}, Device: {tracks.device}")
+            # ------------------------------
+
             if not self.use_separate_tracks:
                 ref_mix_a = ref_mix[..., :middle_idx]  # this is passed to the model
                 ref_mix_b = ref_mix[..., middle_idx:]  # this is used for loss computation
