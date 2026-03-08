@@ -13,8 +13,10 @@ import logging
 # Import audio_separator for BS-RoFormer usage
 from audio_separator.separator import Separator
 
-# Suppress verbose info logs from audio_separator
-logging.getLogger("audio_separator").setLevel(logging.WARNING)
+# Suppress verbose info logs from audio_separator and its children
+logging.getLogger("audio_separator").setLevel(logging.ERROR)
+logging.getLogger("audio_separator.separator").setLevel(logging.ERROR)
+logging.getLogger("audio_separator.separator.separator").setLevel(logging.ERROR)
 
 
 from typing import Callable, Optional, List
@@ -624,7 +626,7 @@ class RoFormerRemixer(torch.nn.Module):
         bs, ch, seq_len = x.shape
         device = x.device
         
-        print(f"DEBUG [Remixer]: Input shape: {x.shape} | Device: {device}")
+        # print(f"DEBUG [Remixer]: Input shape: {x.shape} | Device: {device}")
         
         # Audio separator works on files. This is very slow for training.
         # But fulfilling the specific requirement to use this method.
@@ -743,7 +745,7 @@ class RoFormerRemixer(torch.nn.Module):
         # Convert back to tensor
         separated_tensor = torch.tensor(np.array(separated_batch), device=device, dtype=x.dtype)
         
-        print(f"DEBUG [Remixer]: Separation complete. Output tensor shape: {separated_tensor.shape}, device: {separated_tensor.device}")
+        # print(f"DEBUG [Remixer]: Separation complete. Output tensor shape: {separated_tensor.shape}, device: {separated_tensor.device}")
 
         return separated_tensor
 
