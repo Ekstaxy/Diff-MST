@@ -286,6 +286,16 @@ class MultitrackDataset(torch.utils.data.Dataset):
             offset = np.random.randint(0.25 * num_frames, num_frames - self.length - 1)
 
             for track_filepath in track_filepaths:
+
+                # ------------------------------------------------
+                # Skip mixture.wav or files not in metadata
+                filename = os.path.basename(track_filepath)
+                if filename == "mixture.wav":
+                    continue
+                if filename not in self.song_dirs[dirname]:
+                    continue
+                # ------------------------------------------------
+
                 stereo = False
                 track, _ = torchaudio.load(
                     track_filepath,
@@ -415,8 +425,6 @@ class MultitrackDataset(torch.utils.data.Dataset):
 
 
         return tracks, stereo_info, track_metadata, track_padding, mix, song_name
-
-
 
 class MultitrackDataModule(pl.LightningDataModule):
     def __init__(

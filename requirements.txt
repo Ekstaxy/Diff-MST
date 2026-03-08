@@ -97,7 +97,7 @@ triton==2.2.0
 typeshed_client==2.5.1
 typing_extensions==4.12.2
 urllib3==2.2.2
-wandb==0.17.4
+wandb==0.25.0
 Werkzeug==3.0.3
 yarl==1.9.4
 laion-clap
