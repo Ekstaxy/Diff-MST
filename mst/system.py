@@ -187,7 +187,7 @@ class System(pl.LightningModule):
                 sources = self.remixer(ref_mix)
 
                 # DEBUG: Print shape after separation
-                print(f"DEBUG [Common Step]: Separated sources shape: {sources.shape}")
+                # print(f"DEBUG [Common Step]: Separated sources shape: {sources.shape}")
 
                 # IMPORTANT: Reshape separated stems to be the input 'tracks'
                 # Treating each stem as a stereo track.
@@ -210,7 +210,7 @@ class System(pl.LightningModule):
                 
                 # Overwrite original tracks with separated stems
                 tracks = separated_tracks
-                print(f"DEBUG: Final 'tracks' input shape: {tracks.shape}, Device: {tracks.device}")
+                # print(f"DEBUG: Final 'tracks' input shape: {tracks.shape}, Device: {tracks.device}")
             # ------------------------------
 
             if not self.use_separate_tracks:
