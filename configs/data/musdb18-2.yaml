@@ -1,11 +1,11 @@
 data:
-  class_path: mst.dataloader.MultitrackDataModule
+  class_path: mst.dataloader.PairedMixDataModule
   init_args:
     track_root_dirs: 
       # Note: this path is used when training on Colab.
-      - /content/musdb18hq
+      - /content/processed_dataset
     metadata_files: 
-      - ./data/musdb18.yaml
+      - ./data/musdb18-aug.yaml
     length: 882000   # 20 seconds at 44.1 kHz
     min_tracks: 2
     max_tracks: 4

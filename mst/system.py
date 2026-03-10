@@ -23,6 +23,7 @@ class System(pl.LightningModule):
         loss: torch.nn.Module,
         generate_mix: bool = True,
         use_separate_tracks: bool = False,
+        use_src_separation: bool = True,
         use_track_loss: bool = False,
         use_mix_loss: bool = True,
         use_param_loss: bool = False,
@@ -44,6 +45,7 @@ class System(pl.LightningModule):
         self.loss = loss
         self.generate_mix = generate_mix
         self.use_separate_tracks = use_separate_tracks
+        self.use_src_separation = use_src_separation  # Whether to use source separation on the input tracks before feeding into the model
         self.use_track_loss = use_track_loss
         self.use_mix_loss = use_mix_loss
         self.use_param_loss = use_param_loss
@@ -244,6 +246,22 @@ class System(pl.LightningModule):
                 ) = self.model(tracks_b, ref_mix_a, track_padding_mask=track_padding)
 
                 pred_master_bus_params = keep_master_params
+
+        elif self.use_src_separation:
+
+            ref_mix = batch_stereo_peak_normalize(ref_mix)
+
+            # when using source separation, pass the separated tracks to the model and original mix to loss
+            ref_mix_a = ref_mix[..., :middle_idx]  # this is passed to the model
+            ref_mix_b = ref_mix[..., middle_idx:]  # this is used for loss computation
+            tracks_b = tracks[..., middle_idx:]  # this is passed to the model
+
+            (
+                pred_track_params,
+                pred_fx_bus_params,
+                pred_master_bus_params,
+            ) = self.model(tracks_b, ref_mix_a, track_padding_mask=track_padding)
+
         else:
             # when using a real mix, pass the same mix to model and loss
             if not self.use_separate_tracks:

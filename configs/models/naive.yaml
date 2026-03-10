@@ -3,6 +3,7 @@ model:
   init_args:
     generate_mix: false
     use_separate_tracks: false
+    use_src_separation: true
     active_eq_epoch: 0
     active_compressor_epoch: 0
     active_fx_bus_epoch: 1000

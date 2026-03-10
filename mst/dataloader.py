@@ -519,6 +519,113 @@ class MultitrackDataModule(pl.LightningDataModule):
             batch_size=1,
             num_workers=1,
         )
+    
+class PairedMixDataset(Dataset):
+    def __init__(self, data_dir: str, metadata_file: str, split: str = "train", length: int = 524288):
+        super().__init__()
+        self.length = length
+        self.data_dir = data_dir
+        
+        # 1. 讀取 YAML 決定哪些歌屬於這個 split (train 或 val)
+        with open(metadata_file, 'r') as f:
+            meta = yaml.safe_load(f)
+        allowed_songs = meta.get(split, [])
+        
+        # 2. 掃描所有符合條件的 augmentations
+        self.samples = []
+        for song in allowed_songs:
+            song_dir = os.path.join(data_dir, song)
+            if not os.path.isdir(song_dir):
+                continue
+            
+            # 找到這首歌底下所有的參數檔 (例如 aug_0_params.pt, aug_1_params.pt)
+            param_files = glob.glob(os.path.join(song_dir, "aug_*_params.pt"))
+            for pf in param_files:
+                base_name = os.path.basename(pf).replace("_params.pt", "") # 取得 "aug_0"
+                self.samples.append({
+                    "song_name": song,
+                    "song_dir": song_dir,
+                    "base_name": base_name,
+                    "param_path": pf
+                })
+                
+    def __len__(self):
+        return len(self.samples)
+        
+    def __getitem__(self, idx):
+        sample = self.samples[idx]
+        song_name = sample["song_name"]
+        base_name = sample["base_name"]
+        song_dir = sample["song_dir"]
+        
+        # 1. 讀取 Ground Truth 參數 (.pt)
+        params = torch.load(sample["param_path"])
+        
+        # 2. 讀取分離後的單軌
+        vocals_path = os.path.join(song_dir, f"{base_name}_vocals_est.wav")
+        other_path = os.path.join(song_dir, f"{base_name}_other_est.wav")
+        
+        vocals, _ = torchaudio.load(vocals_path)
+        other, _ = torchaudio.load(other_path)
+        
+        # 確保是單聲道 (防呆機制)
+        if vocals.shape[0] > 1: vocals = vocals.mean(dim=0, keepdim=True)
+        if other.shape[0] > 1: other = other.mean(dim=0, keepdim=True)
+        
+        # 3. 組合 Tracks (Shape: 2, seq_len)
+        tracks = torch.cat([other, vocals], dim=0)
+        
+        # 裁切或補齊長度
+        if tracks.shape[-1] > self.length:
+            start = random.randint(0, tracks.shape[-1] - self.length)
+            tracks = tracks[:, start:start+self.length]
+        elif tracks.shape[-1] < self.length:
+            pad_amt = self.length - tracks.shape[-1]
+            tracks = torch.nn.functional.pad(tracks, (0, pad_amt))
+        
+        # 4. 設定 ref_mix (依照你的需求，直接傳入由 mono 組成的 shape)
+        ref_mix = tracks.clone()
+        
+        # 5. 給 system.py 的佔位符 (Dummy data)
+        stereo_info = torch.tensor([0, 0])
+        track_metadata = torch.tensor([0, 1]) # 假設 0 是 other, 1 是 vocal
+        track_padding = torch.tensor([False, False])
+        
+        # 回傳 7 個變數，把 params 也一併送出去！
+        return tracks, stereo_info, track_metadata, track_padding, ref_mix, song_name, params
+
+
+class PairedMixDataModule(pl.LightningDataModule):
+    def __init__(
+        self,
+        data_dir: str,
+        metadata_file: str,
+        length: int = 524288,
+        batch_size: int = 16,
+        num_workers: int = 4
+    ):
+        super().__init__()
+        self.save_hyperparameters()
+
+    def setup(self, stage=None):
+        self.train_dataset = PairedMixDataset(
+            data_dir=self.hparams.data_dir, 
+            metadata_file=self.hparams.metadata_file, 
+            split="train", 
+            length=self.hparams.length
+        )
+        self.val_dataset = PairedMixDataset(
+            data_dir=self.hparams.data_dir, 
+            metadata_file=self.hparams.metadata_file, 
+            split="val", 
+            length=self.hparams.length
+        )
+
+    def train_dataloader(self):
+        return DataLoader(self.train_dataset, batch_size=self.hparams.batch_size, num_workers=self.hparams.num_workers, shuffle=True, drop_last=True)
+
+    def val_dataloader(self):
+        return DataLoader(self.val_dataset, batch_size=self.hparams.batch_size, num_workers=self.hparams.num_workers, shuffle=False)
 
 
 # if __name__ == "__main__":
