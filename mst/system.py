@@ -10,7 +10,7 @@ from typing import Callable
 from mst.mixing import knowledge_engineering_mix
 from mst.utils import batch_stereo_peak_normalize, batch_stereo_tracks_peak_normalize
 from mst.fx_encoder import FXencoder
-from mst.modules import RoFormerRemixer
+from mst.modules import RoFormerRemixer, Remixer
 import pyloudnorm as pyln
 
 
@@ -55,8 +55,15 @@ class System(pl.LightningModule):
         self.meter = pyln.Meter(44100)
         #self.warmup = warmup
 
-        # Initialize BS-RoFormer Source Separator
-        self.remixer = RoFormerRemixer(sample_rate=44100)
+        # Initialize Source Separator
+
+        # Option 1: BS-RoFormer (High Quality, Slow, File-based I/O)
+        # self.remixer = RoFormerRemixer(sample_rate=44100)
+        
+        # Option 2: HT-Demucs (Fast, Memory Efficient, Pure PyTorch)
+        # Use the original Remixer wrapper but access underlying separator
+        self.remixer = Remixer(sample_rate=44100)
+
         self.remixer.eval()
         self.remixer.requires_grad_(False)
 
@@ -178,35 +185,32 @@ class System(pl.LightningModule):
                 print(ref_track_param_dict)
                 raise ValueError("Found nan in ref_mix")
             
-            # --- SOURCE SEPARATION STEP (BS-RoFormer) ---
+            # --- SOURCE SEPARATION STEP (Demucs or BS-RoFormer) ---
             with torch.no_grad():
                 # Perform separation on the generated random mix (Ground Truth)
-                # Input: ref_mix (bs, 2, seq_len)
-                # RoFormerRemixer uses the logic from source_separation.py internally
-                # Output: sources (bs, 2, 2, seq_len) -> [instrumental, vocals] if configured with those output names
-                sources = self.remixer(ref_mix)
+                
+                if isinstance(self.remixer, RoFormerRemixer):
+                    # BS-RoFormer: (bs, 2, 2, seq_len) -> [instrumental, vocals]
+                    sources = self.remixer(ref_mix)
+                else: 
+                    # HT-Demucs (Original): (bs, 4, 2, seq_len) -> [Drums, Bass, Other, Vocals]
+                    sources = self.remixer.stem_separator(ref_mix)
 
                 # DEBUG: Print shape after separation
                 # print(f"DEBUG [Common Step]: Separated sources shape: {sources.shape}")
 
                 # IMPORTANT: Reshape separated stems to be the input 'tracks'
                 # Treating each stem as a stereo track.
-                # Here we flatten 2 stereo stems into 4 mono tracks
-                # Shape: (bs, 4, seq_len)
-                # NOTE: Ensure your model config is set to 'num_tracks: 4' (or 8 if you want stereo separation)
+                # Here we flatten N stereo stems into 2*N mono tracks
                 
-                # To match 8 tracks (if you want more flexibility/dummy tracks):
-                # separated_tracks = sources.view(bs, 4, seq_len)
+                bs, stems, ch, time = sources.shape 
+                separated_tracks = sources.view(bs, stems * ch, time) # (bs, 8 or 4, time)
                 
-                # If your previous setup used 8 tracks, you might need to adjust.
-                # Assuming simple flattening:
-                bs, stems, ch, time = sources.shape # (bs, 2, 2, time)
-                separated_tracks = sources.view(bs, stems * ch, time) # (bs, 4, time)
-                
-                # If the model strictly requires 8 tracks (common in this repo), repeat or pad.
+                # If the model strictly requires 8 tracks (common in this repo), repeat or pad if needed.
+                # Demucs gives 8 tracks naturally. RoFormer gives 4 tracks -> needs duplication.
                 if num_tracks == 8 and separated_tracks.shape[1] == 4:
-                     print("DEBUG: Repeating 4 tracks to 8 tracks to match model input")
-                     separated_tracks = separated_tracks.repeat(1, 2, 1) # Simply duplicate to fill 8 tracks
+                     # print("DEBUG: Repeating 4 tracks to 8 tracks to match model input")
+                     separated_tracks = separated_tracks.repeat(1, 2, 1) 
                 
                 # Overwrite original tracks with separated stems
                 tracks = separated_tracks
