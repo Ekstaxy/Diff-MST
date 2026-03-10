@@ -14,7 +14,6 @@ from typing import List
 
 from torch.utils.data import random_split
 
-
 class MixDataset(torch.utils.data.Dataset):
     def __init__(self, root_dir: str, length: int = 524288):
         super().__init__()

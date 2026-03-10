@@ -192,18 +192,6 @@ class System(pl.LightningModule):
                 # RoFormerRemixer uses the logic from source_separation.py internally
                 # Output: sources (bs, 2, 2, seq_len) -> [instrumental, vocals] if configured with those output names
                 sources = self.remixer(ref_mix)
-
-                # DEBUG: Print shape after separation
-                # print(f"DEBUG [Common Step]: Separated sources shape: {sources.shape}")
-
-                # IMPORTANT: Reshape separated stems to be the input 'tracks'
-                # Treating each stem as a stereo track.
-                # Here we flatten 2 stereo stems into 4 mono tracks
-                # Shape: (bs, 4, seq_len)
-                # NOTE: Ensure your model config is set to 'num_tracks: 4' (or 8 if you want stereo separation)
-                
-                # To match 8 tracks (if you want more flexibility/dummy tracks):
-                # separated_tracks = sources.view(bs, 4, seq_len)
                 
                 # If your previous setup used 8 tracks, you might need to adjust.
                 # Assuming simple flattening:
