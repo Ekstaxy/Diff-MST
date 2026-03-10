@@ -520,7 +520,7 @@ class MultitrackDataModule(pl.LightningDataModule):
             num_workers=1,
         )
     
-class PairedMixDataset(Dataset):
+class PairedMixDataset(torch.utils.data.Dataset):
     def __init__(self, data_dir: str, metadata_file: str, split: str = "train", length: int = 524288):
         super().__init__()
         self.length = length
@@ -622,10 +622,10 @@ class PairedMixDataModule(pl.LightningDataModule):
         )
 
     def train_dataloader(self):
-        return DataLoader(self.train_dataset, batch_size=self.hparams.batch_size, num_workers=self.hparams.num_workers, shuffle=True, drop_last=True)
+        return torch.utils.data.DataLoader(self.train_dataset, batch_size=self.hparams.batch_size, num_workers=self.hparams.num_workers, shuffle=True, drop_last=True)
 
     def val_dataloader(self):
-        return DataLoader(self.val_dataset, batch_size=self.hparams.batch_size, num_workers=self.hparams.num_workers, shuffle=False)
+        return torch.utils.data.DataLoader(self.val_dataset, batch_size=self.hparams.batch_size, num_workers=self.hparams.num_workers, shuffle=False)
 
 
 # if __name__ == "__main__":
