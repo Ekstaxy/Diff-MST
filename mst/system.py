@@ -129,7 +129,7 @@ class System(pl.LightningModule):
             train (bool): Wether step is called during training (True) or validation (False).
         """
 
-        tracks, instrument_id, stereo_info, track_padding, ref_mix, song_name = batch
+        tracks, instrument_id, stereo_info, track_padding, ref_mix, song_name, ref_params_dict = batch
         #print("song_names from this batch: ", song_name)
 
         # split into A and B sections
