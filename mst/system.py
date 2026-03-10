@@ -10,7 +10,7 @@ from typing import Callable
 from mst.mixing import knowledge_engineering_mix
 from mst.utils import batch_stereo_peak_normalize, batch_stereo_tracks_peak_normalize
 from mst.fx_encoder import FXencoder
-from mst.modules import RoFormerRemixer
+from mst.modules import RoFormerRemixer, Remixer
 import pyloudnorm as pyln
 
 
@@ -55,8 +55,15 @@ class System(pl.LightningModule):
         self.meter = pyln.Meter(44100)
         #self.warmup = warmup
 
-        # Initialize BS-RoFormer Source Separator
-        self.remixer = RoFormerRemixer(sample_rate=44100)
+        # Initialize Source Separator
+
+        # Option 1: BS-RoFormer (High Quality, Slow, File-based I/O)
+        # self.remixer = RoFormerRemixer(sample_rate=44100)
+        
+        # Option 2: HT-Demucs (Fast, Memory Efficient, Pure PyTorch)
+        # Use the original Remixer wrapper but access underlying separator
+        self.remixer = Remixer(sample_rate=44100)
+
         self.remixer.eval()
         self.remixer.requires_grad_(False)
 
