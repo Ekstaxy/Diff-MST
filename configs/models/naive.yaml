@@ -1,7 +1,7 @@
 model:
   class_path: mst.system.System
   init_args:
-    generate_mix: true
+    generate_mix: false
     use_separate_tracks: false
     active_eq_epoch: 0
     active_compressor_epoch: 0
