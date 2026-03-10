@@ -215,6 +215,17 @@ class System(pl.LightningModule):
                 # Overwrite original tracks with separated stems
                 tracks = separated_tracks
                 # print(f"DEBUG: Final 'tracks' input shape: {tracks.shape}, Device: {tracks.device}")
+                
+                # FIX: Update padding mask to match the new track count from separation
+                # The original mask was for input files (e.g., 4 tracks). 
+                # Now we have 8 separated tracks (Demucs output).
+                # All separated tracks are valid (none are padding).
+                bs_new, num_tracks_new, _ = tracks.shape
+                track_padding = torch.zeros(
+                    (bs_new, num_tracks_new), 
+                    dtype=torch.bool, 
+                    device=tracks.device
+                )
             # ------------------------------
 
             if not self.use_separate_tracks:
