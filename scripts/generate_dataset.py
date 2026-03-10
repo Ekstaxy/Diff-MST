@@ -87,6 +87,30 @@ def process_song(song_dir, args, mixer, separator, output_root):
     save_dir = os.path.join(output_root, song_name)
     os.makedirs(save_dir, exist_ok=True)
     
+    # Check if already processed enough augmentations
+    existing_mixes = glob.glob(os.path.join(save_dir, "*_mix.wav"))
+    
+    # If we have *enough* mixes, skip the whole song
+    if len(existing_mixes) >= args.augmentations:
+        # print(f"Skipping {song_name}: Already has {len(existing_mixes)} augmentations.")
+        return
+    
+    # If we have *some* files but not all (interrupted), we want to append more
+    # We find the highest index to continue from
+    start_aug_idx = 0
+    if len(existing_mixes) > 0:
+        indices = []
+        for f in existing_mixes:
+            try:
+                # expecting format: aug_{i}_mix.wav
+                base = os.path.basename(f)
+                idx = int(base.split('_')[1])
+                indices.append(idx)
+            except:
+                pass
+        if indices:
+            start_aug_idx = max(indices) + 1
+            
     # 1. Load Tracks
     wav_files = glob.glob(os.path.join(song_dir, "*.wav"))
     tracks = []
@@ -138,7 +162,17 @@ def process_song(song_dir, args, mixer, separator, output_root):
     full_tracks_tensor = full_tracks_tensor.squeeze(1) # (num_tracks, full_len)
     
     # 2. Augmentation Loop
-    for i in range(args.augmentations):
+    # Adjust range to append new augmentations instead of overwriting 0..N
+    end_aug_idx = start_aug_idx + (args.augmentations - len(existing_mixes))
+    
+    # If we need e.g. 5 augs, and we have 2 (0, 1), we start at 2 and go to 5.
+    # range(2, 5) -> 2, 3, 4. Total 3 new files. 3+2=5. Correct.
+    # What if we have 5 already? start=6, end=6. range empty. Correct.
+    
+    # If user wants *total* args.augmentations:
+    target_total = args.augmentations
+    
+    for i in range(start_aug_idx, target_total):
         # Random Crop
         if full_tracks_tensor.shape[-1] > length_samples:
             start = random.randint(0, full_tracks_tensor.shape[-1] - length_samples)
