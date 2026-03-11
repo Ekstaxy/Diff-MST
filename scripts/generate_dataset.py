@@ -230,6 +230,7 @@ def main():
     
     track_root_dirs, metadata_files = load_metadata(args.config)
     song_dirs = get_song_dirs(track_root_dirs, metadata_files)
+    print(f"{track_root_dirs} and {metadata_files} found in config.")
     
     print(f"Found {len(song_dirs)} songs in {track_root_dirs}")
     
