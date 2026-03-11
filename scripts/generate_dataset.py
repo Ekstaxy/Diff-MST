@@ -21,6 +21,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Pre-process dataset: Mix -> Separate -> Save")
     parser.add_argument("--config", type=str, default="configs/data/musdb18-2.yaml", help="Path to data config")
     parser.add_argument("--output_dir", type=str, required=True, help="Where to save the processed dataset")
+    # 將 augmentations 數量訂在參數中，你可以透過指令或修改這裡的預設值來當作 config
     parser.add_argument("--augmentations", type=int, default=10, help="How many random mixes per song?")
     parser.add_argument("--sample_rate", type=int, default=44100)
     parser.add_argument("--duration", type=float, default=20.0, help="Duration in seconds per clip")
@@ -31,167 +32,115 @@ def parse_args():
 def load_metadata(config_path):
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
-    
-    # Extract root dirs and metadata files from the config structure
-    # Assuming structure: data -> init_args -> track_root_dirs / metadata_files
     try:
         init_args = config['data']['init_args']
-        track_root_dirs = init_args['track_root_dirs']
-        metadata_files = init_args['metadata_files']
+        track_root_dirs = init_args.get('track_root_dirs', [])
+        metadata_files = init_args.get('metadata_files', [])
     except KeyError:
-        # try flat structure if simplified
         track_root_dirs = config.get('track_root_dirs', [])
         metadata_files = config.get('metadata_files', [])
         
     return track_root_dirs, metadata_files
 
 def get_song_dirs(track_root_dirs, metadata_files):
-    # This logic mimics MultitrackDataModule
-    song_dirs = {} # keys: dir path, values: list of valid track filenames
-    
-    # Load metadata allowed files
-    allowed_files = set()
-    for meta_file in metadata_files:
-        # meta_file path might be relative to project root
-        if not os.path.exists(meta_file):
-             # Try relative to config location or project root logic
-             # Assuming running from project root
-             pass
-        
-        with open(meta_file, 'r') as f:
-            meta = yaml.safe_load(f)
-            # Flatten structure to get list of files
-            # The structure in musdb18.yaml is typically song_name: [file1, file2...] or flat list?
-            # Based on checking dataloader, it seems it maps dir to files.
-            # Let's assume metadata is dict of {song_name: {tracks: [...]}} or similar
-            # Or simpler: just walk directories and filter.
-            pass
-            # For now, let's rely on directory walking as fallback if metadata is complex
-            
-    # Simple walk strategy (robust fallback)
     all_song_paths = []
     for root_dir in track_root_dirs:
-        # e.g. /content/musdb18hq/train/Song Name/
-        # or /content/musdb18hq/Song Name/
-        # Recursive search for folders containing wav files
         for root, dirs, files in os.walk(root_dir):
             wavs = [f for f in files if f.endswith('.wav') and not f.startswith('._')]
-            if len(wavs) >= 2: # At least 2 stems to mix
+            if len(wavs) >= 2: 
                 all_song_paths.append(root)
-                
     return sorted(list(set(all_song_paths)))
 
 def process_song(song_dir, args, mixer, separator, output_root):
     song_name = os.path.basename(song_dir)
-    # Create output dir for this song
     save_dir = os.path.join(output_root, song_name)
     os.makedirs(save_dir, exist_ok=True)
     
-    # Check if already processed enough augmentations
     existing_mixes = glob.glob(os.path.join(save_dir, "*_mix.wav"))
-    
-    # If we have *enough* mixes, skip the whole song
     if len(existing_mixes) >= args.augmentations:
-        # print(f"Skipping {song_name}: Already has {len(existing_mixes)} augmentations.")
         return
     
-    # If we have *some* files but not all (interrupted), we want to append more
-    # We find the highest index to continue from
     start_aug_idx = 0
     if len(existing_mixes) > 0:
-        indices = []
-        for f in existing_mixes:
-            try:
-                # expecting format: aug_{i}_mix.wav
-                base = os.path.basename(f)
-                idx = int(base.split('_')[1])
-                indices.append(idx)
-            except:
-                pass
+        indices = [int(os.path.basename(f).split('_')[1]) for f in existing_mixes if '_' in os.path.basename(f)]
         if indices:
             start_aug_idx = max(indices) + 1
             
-    # 1. Load Tracks
-    wav_files = glob.glob(os.path.join(song_dir, "*.wav"))
-    tracks = []
-    
-    # Identify track names (metadata)
-    # Simple logic: load all valid wavs except 'mixture.wav'
-    loaded_audio = []
+    # 1. 讀取並辨識單軌 (MUSDB18 格式: vocals, bass, drums, other)
+    # 我們強制定義順序，確保 Model 輸入一致
+    expected_stems = ['vocals.wav', 'bass.wav', 'drums.wav', 'other.wav']
+    loaded_stems = {}
     
     length_samples = int(args.duration * args.sample_rate)
-    
-    # Determine common length of full song
     max_len = 0
-    valid_files = []
-    for f in wav_files:
-        if "mixture.wav" in f: continue
-        info = torchaudio.info(f)
-        if info.num_frames > max_len:
-            max_len = info.num_frames
-        valid_files.append(f)
+    
+    for stem_name in expected_stems:
+        file_path = os.path.join(song_dir, stem_name)
+        if os.path.exists(file_path):
+            audio, sr = torchaudio.load(file_path)
+            if sr != args.sample_rate:
+                audio = torchaudio.transforms.Resample(sr, args.sample_rate)(audio)
+            
+            # 強制轉為單聲道 (Mono) 以符合系統輸入
+            if audio.shape[0] == 2:
+                audio = audio.mean(dim=0, keepdim=True)
+                
+            loaded_stems[stem_name] = audio
+            max_len = max(max_len, audio.shape[-1])
+            
+    if 'vocals.wav' not in loaded_stems:
+        print(f"Skipping {song_name}: No vocals.wav found.")
+        return
         
     if max_len < length_samples:
-        print(f"Skipping {song_name}: too short ({max_len} < {length_samples})")
+        print(f"Skipping {song_name}: too short.")
         return
 
-    # Load all full tracks into RAM (they are usually manageable)
-    # We will slice them randomly later
-    full_tracks = []
-    for f in valid_files:
-        audio, sr = torchaudio.load(f)
-        # Resample if needed
-        if sr != args.sample_rate:
-            resampler = torchaudio.transforms.Resample(sr, args.sample_rate)
-            audio = resampler(audio)
-        
-        # Mono/Stereo check - force Mono for mixer input? 
-        # The system usually expects (bs, num_tracks, seq_len) where tracks are mono
-        # If input is stereo, we might need to mixdown or keep stereo?
-        # Looking at system.py: "ref_mix_mid = ref_mix.sum(dim=1)" -> ref mix is stereo
-        # Input tracks to mixer: usually mono stems.
-        if audio.shape[0] == 2:
-            audio = audio.mean(dim=0, keepdim=True) # Convert stem to mono for simple mixing
-        
-        full_tracks.append(audio)
-    
-    if not full_tracks:
-        return
-
-    full_tracks_tensor = torch.stack(full_tracks).to(args.device) # (num_tracks, 1, full_len)
-    full_tracks_tensor = full_tracks_tensor.squeeze(1) # (num_tracks, full_len)
-    
     # 2. Augmentation Loop
-    # Adjust range to append new augmentations instead of overwriting 0..N
-    end_aug_idx = start_aug_idx + (args.augmentations - len(existing_mixes))
-    
-    # If we need e.g. 5 augs, and we have 2 (0, 1), we start at 2 and go to 5.
-    # range(2, 5) -> 2, 3, 4. Total 3 new files. 3+2=5. Correct.
-    # What if we have 5 already? start=6, end=6. range empty. Correct.
-    
-    # If user wants *total* args.augmentations:
     target_total = args.augmentations
     
     for i in range(start_aug_idx, target_total):
-        # Random Crop
-        if full_tracks_tensor.shape[-1] > length_samples:
-            start = random.randint(0, full_tracks_tensor.shape[-1] - length_samples)
-            current_slice = full_tracks_tensor[:, start:start+length_samples]
-        else:
-            # Pad if exactly equal or slight mismatch
-            current_slice = full_tracks_tensor[:, :length_samples] # handle later
-            if current_slice.shape[-1] < length_samples:
-                # Pad
-                pad_amt = length_samples - current_slice.shape[-1]
-                current_slice = torch.nn.functional.pad(current_slice, (0, pad_amt))
         
-        # Add Batch Dim for Mixer: (1, num_tracks, seq_len)
-        batch_slice = current_slice.unsqueeze(0)
+        # --- [重點 1] 人聲能量偵測 (VAD) 與安全裁切 ---
+        valid_crop = False
+        start_idx = 0
+        vocal_track = loaded_stems['vocals.wav']
         
-        # Random Mix
-        # This calls naive_random_mix which generates random gains/EQ/Pan
-        # Returns: mixed_tracks, mix, param_dicts...
-        # mix shape: (bs, 2, seq_len) -> Stereo Mix
+        # 嘗試 50 次找到有聲音的 20 秒
+        for _ in range(50):
+            start = random.randint(0, max_len - length_samples)
+            voc_slice = vocal_track[:, start:start+length_samples]
+            
+            # 計算這 20 秒人聲的 RMS 能量
+            rms = torch.sqrt(torch.mean(voc_slice ** 2))
+            dbfs = 20 * torch.log10(rms + 1e-8)
+            
+            if dbfs > -35.0:  # 設定 -35 dB 為靜音閥值 (可依需求調整)
+                valid_crop = True
+                start_idx = start
+                break
+                
+        if not valid_crop:
+            print(f"Warning: Could not find valid vocal segment for {song_name} aug {i}. Skipping this aug.")
+            continue
+        
+        # --- [重點 2] 準備未處理的 Track 與合成 Dry Instrument ---
+        current_slices = []
+        for stem_name in expected_stems:
+            if stem_name in loaded_stems:
+                current_slices.append(loaded_stems[stem_name][:, start_idx:start_idx+length_samples])
+            else:
+                current_slices.append(torch.zeros((1, length_samples))) # 缺少的軌道補 0
+                
+        # 組合給 Mixer 的 Tensor: (4, seq_len)
+        full_tracks_tensor = torch.cat(current_slices, dim=0).to(args.device)
+        batch_slice = full_tracks_tensor.unsqueeze(0) # (1, 4, seq_len)
+        
+        # 分離出你想存的 Dry Tracks (保持在 CPU 以利儲存)
+        dry_vocal = current_slices[0] # Vocals
+        dry_instrumental = current_slices[1] + current_slices[2] + current_slices[3] # Bass + Drums + Other
+        
+        # --- Random Mix (產生 random 參數與立體聲混音) ---
         (
             mixed_tracks, 
             ref_mix, 
@@ -206,7 +155,7 @@ def process_song(song_dir, args, mixer, separator, output_root):
             mixer,
             use_track_input_fader=True,
             use_track_panner=True,
-            use_track_eq=True, # Random EQ
+            use_track_eq=True,
             use_track_compressor=True,
             use_fx_bus=True,
             use_master_bus=True
@@ -215,58 +164,57 @@ def process_song(song_dir, args, mixer, separator, output_root):
         # Normalize Mix
         ref_mix_max = ref_mix.abs().max()
         if ref_mix_max > 0:
-            ref_mix = ref_mix / (ref_mix_max + 1e-8) * 0.9 # Peak normalize to -1dB roughly
-        
-        # 3. Source Separation (The slow part)
-        # RoFormerRemixer expects (bs, 2, seq_len)
+            ref_mix = ref_mix / (ref_mix_max + 1e-8) * 0.9 
+            
+        # --- [重點 3] Source Separation ---
         try:
-            # separated_sources shape: (bs, 2, 2, seq_len) -> (Batch, Stems[Inst, Voc], Stereo, Time)
-            separated_sources = separator(ref_mix) 
+            # 加入 no_grad 防止 OOM
+            with torch.no_grad():
+                separated_sources = separator(ref_mix) 
         except Exception as e:
             print(f"Separation failed for {song_name} aug {i}: {e}")
+            torch.cuda.empty_cache()
             continue
             
         # 4. Save to Disk
-        # Filename pattern: {song_name}_aug{i}
         base_name = f"aug_{i}"
         
-        # Save Mix
+        # 4.1 儲存你的需求：Dry Tracks
+        save_audio(dry_vocal, os.path.join(save_dir, f"{base_name}_dry_vocal.wav"), args.sample_rate)
+        save_audio(dry_instrumental, os.path.join(save_dir, f"{base_name}_dry_instrumental.wav"), args.sample_rate)
+        
+        # 4.2 儲存 Reference Mix
         mix_path = os.path.join(save_dir, f"{base_name}_mix.wav")
         save_audio(ref_mix[0], mix_path, args.sample_rate)
         
-        # Save Separated Vocals
-        # separated_sources[0, 1] is Vocals (based on RoFormerRemixer logic order [Inst, Voc])
+        # 4.3 儲存分離出來的軌道
         vocab_est = separated_sources[0, 1]
         voc_path = os.path.join(save_dir, f"{base_name}_vocals_est.wav")
         save_audio(vocab_est, voc_path, args.sample_rate)
         
-        # Save Separated Instrumental
-        # separated_sources[0, 0] is Instrumental
         inst_est = separated_sources[0, 0]
         inst_path = os.path.join(save_dir, f"{base_name}_other_est.wav")
         save_audio(inst_est, inst_path, args.sample_rate)
         
-        # Save Metadata / Parameters (Optional, for training inputs)
-        # We might need the original 'tracks' (mono stems) as input to the model?
-        # System.py: "tracks = separated_tracks" -> The model input IS the separated stems.
-        # But we also need 'ref_mix' (done).
-        # We also need 'target parameters' (mix_params) if we are training to predict them?
-        # System.py: "ref_track_param_dict... = ref_params" (Ground Truth)
-        # Yes, you need to save the Ground Truth parameters so the model can learn to predict them!
-        
+        # 4.4 儲存 Parameters 與裁切紀錄
         params_path = os.path.join(save_dir, f"{base_name}_params.pt")
         torch.save({
+            'crop_start': start_idx,               # 紀錄切在原始音檔的哪個 index
             'track_params': mix_params[0].cpu(),
             'fx_bus_params': fx_bus_params[0].cpu(),
             'master_bus_params': master_bus_params[0].cpu(),
-            'mixed_tracks': mixed_tracks[0].cpu() # Original mono stems processed
+            'dry_vocal': dry_vocal.cpu(),          # 也可以選擇把波形包在 pt 裡，讀取更快
+            'dry_instrumental': dry_instrumental.cpu()
         }, params_path)
 
+        # 釋放 GPU 記憶體
+        del separated_sources
+        torch.cuda.empty_cache()
+
 def save_audio(tensor, path, sr):
-    # tensor: (channels, time)
     if tensor.device.type != 'cpu':
         tensor = tensor.cpu()
-    data = tensor.numpy().T # (time, channels)
+    data = tensor.numpy().T 
     sf.write(path, data, sr)
 
 def main():
@@ -276,17 +224,15 @@ def main():
     print(f"Output Dir: {args.output_dir}")
     print(f"Augmentations per song: {args.augmentations}")
     
-    # 1. Setup Modules
     mixer = AdvancedMixConsole(sample_rate=args.sample_rate).to(args.device)
     separator = RoFormerRemixer(sample_rate=args.sample_rate, model_name=args.roformer_model).to(args.device)
+    separator.eval() # 確保分離模型在 eval 模式
     
-    # 2. Get Data List
     track_root_dirs, metadata_files = load_metadata(args.config)
     song_dirs = get_song_dirs(track_root_dirs, metadata_files)
     
     print(f"Found {len(song_dirs)} songs in {track_root_dirs}")
     
-    # 3. Process
     for song_dir in tqdm(song_dirs, desc="Processing Songs"):
         try:
             process_song(song_dir, args, mixer, separator, args.output_dir)
