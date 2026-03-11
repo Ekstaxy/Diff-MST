@@ -228,9 +228,8 @@ def main():
     separator = RoFormerRemixer(sample_rate=args.sample_rate, model_name=args.roformer_model).to(args.device)
     separator.eval() # 確保分離模型在 eval 模式
     
-    track_root_dirs, metadata_files = load_metadata(args.config)
+    track_root_dirs, metadata_files = "/content/musdb18hq", "./data/musdb18.yaml"
     song_dirs = get_song_dirs(track_root_dirs, metadata_files)
-    print(f"{track_root_dirs} and {metadata_files} found in config.")
     
     print(f"Found {len(song_dirs)} songs in {track_root_dirs}")
     
