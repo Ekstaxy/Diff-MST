@@ -44,11 +44,15 @@ def load_metadata(config_path):
 
 def get_song_dirs(track_root_dirs, metadata_files):
     all_song_paths = []
+    # 嚴格定義 MUSDB18 必須擁有的檔案
+    expected_stems = {'vocals.wav', 'bass.wav', 'drums.wav', 'other.wav'}
+    
     for root_dir in track_root_dirs:
         for root, dirs, files in os.walk(root_dir):
-            wavs = [f for f in files if f.endswith('.wav') and not f.startswith('._')]
-            if len(wavs) >= 2: 
+            # 只有當這 4 個檔案都存在於該資料夾時，才加進去
+            if expected_stems.issubset(set(files)):
                 all_song_paths.append(root)
+                
     return sorted(list(set(all_song_paths)))
 
 def process_song(song_dir, args, mixer, separator, output_root):
