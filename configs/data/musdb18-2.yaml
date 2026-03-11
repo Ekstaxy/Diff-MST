@@ -1,7 +1,7 @@
 data:
   class_path: mst.dataloader.PairedMixDataModule
   init_args:
-    data_dir: /content/musdb18
+    data_dir: /content/musdb18hq
     metadata_file: ./data/musdb18.yaml
     length: 882000   # 20 seconds at 44.1 kHz
     # min_tracks: 2
