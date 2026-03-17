@@ -7,7 +7,7 @@ trainer:
     init_args:
       project: DiffMST_Retrain
       # change to the directory where you want to save wandb logs
-      save_dir: /content
+      save_dir: /home/ajchen2005
   enable_checkpointing: true
   callbacks:
     - class_path: mst.callbacks.audio.LogAudioCallback
@@ -45,5 +45,5 @@ trainer:
   enable_model_summary: true
   num_sanity_val_steps: 1
   benchmark: true
-  accumulate_grad_batches: 4
+  accumulate_grad_batches: 2
   # reload_dataloaders_every_n_epochs: 1

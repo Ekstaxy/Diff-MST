@@ -7,6 +7,8 @@
 #        )
 
 import torch
+import torch.multiprocessing as mp
+mp.set_sharing_strategy('file_system')
 from pytorch_lightning.cli import LightningCLI
 from pytorch_lightning.strategies import DDPStrategy
 

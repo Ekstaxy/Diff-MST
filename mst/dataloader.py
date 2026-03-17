@@ -521,10 +521,11 @@ class MultitrackDataModule(pl.LightningDataModule):
         )
     
 class PairedMixDataset(torch.utils.data.Dataset):
-    def __init__(self, data_dir: str, metadata_file: str, split: str = "train", length: int = 524288):
+    def __init__(self, data_dir: str, metadata_file: str, split: str = "train", length: int = 524288, subset_ratio: float = 1.0):
         super().__init__()
         self.length = length
         self.data_dir = data_dir
+        self.subset_ratio = subset_ratio  # 0.5 means 50%
         
         # 1. 讀取 YAML 決定哪些歌屬於這個 split (train 或 val)
         with open(metadata_file, 'r') as f:
@@ -532,7 +533,7 @@ class PairedMixDataset(torch.utils.data.Dataset):
         allowed_songs = meta.get(split, [])
         
         # 2. 掃描所有符合條件的 augmentations
-        self.samples = []
+        self.all_samples = []  # Changed from self.samples to self.all_samples
         for song in allowed_songs:
             song_dir = os.path.join(data_dir, song)
             if not os.path.isdir(song_dir):
@@ -542,13 +543,29 @@ class PairedMixDataset(torch.utils.data.Dataset):
             param_files = glob.glob(os.path.join(song_dir, "aug_*_params.pt"))
             for pf in param_files:
                 base_name = os.path.basename(pf).replace("_params.pt", "") # 取得 "aug_0"
-                self.samples.append({
+                self.all_samples.append({  # Append to all_samples
                     "song_name": song,
                     "song_dir": song_dir,
                     "base_name": base_name,
                     "param_path": pf
                 })
-                
+        
+        # Initialize samples with a random subset
+        self.shuffle_and_subset()
+
+    def shuffle_and_subset(self):
+        """Shuffle all samples and pick a subset for this epoch."""
+        random.shuffle(self.all_samples)
+        # Use config-defined ratio
+        subset_size = int(len(self.all_samples) * self.subset_ratio)
+        
+        # Ensure at least one sample if possible
+        if subset_size == 0 and len(self.all_samples) > 0:
+            subset_size = len(self.all_samples)
+            
+        self.samples = self.all_samples[:subset_size]
+        print(f"Epoch subset: Selected {len(self.samples)}/{len(self.all_samples)} samples (Ratio: {self.subset_ratio}).")
+
     def __len__(self):
         return len(self.samples)
         
@@ -623,8 +640,9 @@ class PairedMixDataModule(pl.LightningDataModule):
         data_dir: str,
         metadata_file: str,
         length: int = 524288,
-        batch_size: int = 16,
-        num_workers: int = 4
+        batch_size: int = 32,
+        num_workers: int = 0,
+        train_subset_ratio: float = 1.0 
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -634,7 +652,8 @@ class PairedMixDataModule(pl.LightningDataModule):
             data_dir=self.hparams.data_dir, 
             metadata_file=self.hparams.metadata_file, 
             split="train", 
-            length=self.hparams.length
+            length=self.hparams.length,
+            subset_ratio=self.hparams.train_subset_ratio
         )
         self.val_dataset = PairedMixDataset(
             data_dir=self.hparams.data_dir, 
@@ -644,6 +663,10 @@ class PairedMixDataModule(pl.LightningDataModule):
         )
 
     def train_dataloader(self):
+        # Reshuffle dataset before creating dataloader for the new epoch
+        if hasattr(self.train_dataset, 'shuffle_and_subset'):
+             self.train_dataset.shuffle_and_subset()
+             
         return torch.utils.data.DataLoader(self.train_dataset, batch_size=self.hparams.batch_size, num_workers=self.hparams.num_workers, shuffle=True, drop_last=True)
 
     def val_dataloader(self):
