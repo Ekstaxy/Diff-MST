@@ -136,13 +136,18 @@ def process_song(song_dir, args, mixer, separator, output_root):
             else:
                 current_slices.append(torch.zeros((1, length_samples))) # 缺少的軌道補 0
                 
-        # 組合給 Mixer 的 Tensor: (4, seq_len)
-        full_tracks_tensor = torch.cat(current_slices, dim=0).to(args.device)
-        batch_slice = full_tracks_tensor.unsqueeze(0) # (1, 4, seq_len)
-        
         # 分離出你想存的 Dry Tracks (保持在 CPU 以利儲存)
         dry_vocal = current_slices[0] # Vocals
         dry_instrumental = current_slices[1] + current_slices[2] + current_slices[3] # Bass + Drums + Other
+        
+        # [修改處] 將 Vocal 與合併後的 Instrumental 轉到 GPU，並組合給 Mixer
+        # 這會讓輸入 Mixer 的軌道數從 4 變成 2
+        vocal_tensor = dry_vocal.to(args.device)
+        instrumental_tensor = dry_instrumental.to(args.device)
+        
+        # 組合 Tensor: (2, seq_len)
+        two_tracks_tensor = torch.cat([vocal_tensor, instrumental_tensor], dim=0)
+        batch_slice = two_tracks_tensor.unsqueeze(0) # 形狀變成 (1, 2, seq_len)
         
         # --- Random Mix (產生 random 參數與立體聲混音) ---
         (
@@ -232,7 +237,7 @@ def main():
     separator = RoFormerRemixer(sample_rate=args.sample_rate, model_name=args.roformer_model).to(args.device)
     separator.eval() # 確保分離模型在 eval 模式
     
-    track_root_dirs, metadata_files = "/content/musdb18hq", "./data/musdb18.yaml"
+    track_root_dirs, metadata_files = "/work/ajchen2005/musdb18hq", "/home/ajchen2005/Diff-MST/configs/data/musdb18-2.yaml"
     song_dirs = get_song_dirs(track_root_dirs, metadata_files)
     
     print(f"Found {len(song_dirs)} songs in {track_root_dirs}")
