@@ -538,7 +538,7 @@ class PairedMixDataset(torch.utils.data.Dataset):
             if not os.path.isdir(song_dir):
                 continue
             
-            # 找到這首歌底下所有的參數檔 (例如 aug_0_params.pt, aug_1_params.pt)
+            # 使用 glob 搜尋所有存在的 aug_*.pt
             param_files = glob.glob(os.path.join(song_dir, "aug_*_params.pt"))
             for pf in param_files:
                 base_name = os.path.basename(pf).replace("_params.pt", "") # 取得 "aug_0"
@@ -561,38 +561,60 @@ class PairedMixDataset(torch.utils.data.Dataset):
         # 1. 讀取 Ground Truth 參數 (.pt)
         params = torch.load(sample["param_path"])
         
-        # 2. 讀取分離後的單軌
-        vocals_path = os.path.join(song_dir, f"{base_name}_vocals_est.wav")
-        other_path = os.path.join(song_dir, f"{base_name}_other_est.wav")
+        # 2. 讀取 Dry Tracks (Track Input)
+        dry_vocal_path = os.path.join(song_dir, f"{base_name}_dry_vocal.wav")
+        dry_inst_path = os.path.join(song_dir, f"{base_name}_dry_instrumental.wav")
         
-        vocals, _ = torchaudio.load(vocals_path)
-        other, _ = torchaudio.load(other_path)
+        dry_vocal, _ = torchaudio.load(dry_vocal_path)
+        dry_inst, _ = torchaudio.load(dry_inst_path)
+
+        # 確保是單聲道
+        if dry_vocal.shape[0] > 1: dry_vocal = dry_vocal.mean(dim=0, keepdim=True)
+        if dry_inst.shape[0] > 1: dry_inst = dry_inst.mean(dim=0, keepdim=True)
+
+        tracks = torch.cat([dry_inst, dry_vocal], dim=0) # [Other, Vocal]
         
-        # 確保是單聲道 (防呆機制)
-        if vocals.shape[0] > 1: vocals = vocals.mean(dim=0, keepdim=True)
-        if other.shape[0] > 1: other = other.mean(dim=0, keepdim=True)
+        # 3. 讀取 Source Separation Estimate (Refer Input)
+        vocals_est_path = os.path.join(song_dir, f"{base_name}_vocals_est.wav")
+        other_est_path = os.path.join(song_dir, f"{base_name}_other_est.wav")
         
-        # 3. 組合 Tracks (Shape: 2, seq_len)
-        tracks = torch.cat([other, vocals], dim=0)
+        vocals_est, _ = torchaudio.load(vocals_est_path)
+        other_est, _ = torchaudio.load(other_est_path)
         
-        # 裁切或補齊長度
-        if tracks.shape[-1] > self.length:
-            start = random.randint(0, tracks.shape[-1] - self.length)
-            tracks = tracks[:, start:start+self.length]
-        elif tracks.shape[-1] < self.length:
-            pad_amt = self.length - tracks.shape[-1]
-            tracks = torch.nn.functional.pad(tracks, (0, pad_amt))
+        if vocals_est.shape[0] > 1: vocals_est = vocals_est.mean(dim=0, keepdim=True)
+        if other_est.shape[0] > 1: other_est = other_est.mean(dim=0, keepdim=True)
         
-        # 4. 設定 ref_mix (依照你的需求，直接傳入由 mono 組成的 shape)
-        ref_mix = tracks.clone()
+        est_tracks = torch.cat([other_est, vocals_est], dim=0)
+
+        # 4. 讀取 Ground Truth Mix
+        mix_path = os.path.join(song_dir, f"{base_name}_mix.wav")
+        true_mix, _ = torchaudio.load(mix_path)
+        
+        # Helper to crop/pad
+        def process(t, length, off):
+            if t.shape[-1] > length:
+                return t[..., off:off+length]
+            elif t.shape[-1] < length:
+                return torch.nn.functional.pad(t, (0, length - t.shape[-1]))
+            return t
+
+        # Use tracks length to determine offset
+        current_len = tracks.shape[-1]
+        offset = 0
+        if current_len > self.length:
+            offset = np.random.randint(0, current_len - self.length)
+        
+        tracks = process(tracks, self.length, offset)
+        est_tracks = process(est_tracks, self.length, offset)
+        true_mix = process(true_mix, self.length, offset)
         
         # 5. 給 system.py 的佔位符 (Dummy data)
         stereo_info = torch.tensor([0, 0])
-        track_metadata = torch.tensor([0, 1]) # 假設 0 是 other, 1 是 vocal
         track_padding = torch.tensor([False, False])
         
-        # 回傳 7 個變數，把 params 也一併送出去！
-        return tracks, stereo_info, track_metadata, track_padding, ref_mix, song_name, params
+        # Return 7 items matching system.py unpacking:
+        # tracks, est_tracks, true_mix, stereo_info, track_padding, song_name, ref_params_dict
+        return tracks, est_tracks, true_mix, stereo_info, track_padding, song_name, params
 
 
 class PairedMixDataModule(pl.LightningDataModule):

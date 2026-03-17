@@ -128,8 +128,24 @@ class System(pl.LightningModule):
             optimizer_idx (int): Index of the optimizer, this step is called once for each optimizer.
             train (bool): Wether step is called during training (True) or validation (False).
         """
+        if self.use_src_separation:
+            tracks, est_tracks, true_mix, stereo_info, track_padding, song_name, ref_params_dict = batch
+            
+            # ref_mix logic: est_tracks are 2 separate mono tracks (Other, Vocal)
+            # The model takes them as "channels", so we keep them separated.
+            # est_tracks shape: (bs, 2, seq_len)
+            ref_mix_a = est_tracks 
 
-        tracks, instrument_id, stereo_info, track_padding, ref_mix, song_name, ref_params_dict = batch
+            ref_mix_b = true_mix # Ground Truth for loss
+            tracks_b = tracks # Dry tracks for mixing
+
+            (
+                pred_track_params,
+                pred_fx_bus_params,
+                pred_master_bus_params,
+            ) = self.model(tracks, ref_mix_a, track_padding_mask=track_padding)
+        else:
+            tracks, instrument_id, stereo_info, track_padding, ref_mix, song_name, ref_params_dict = batch
         #print("song_names from this batch: ", song_name)
 
         # split into A and B sections
@@ -248,19 +264,9 @@ class System(pl.LightningModule):
                 pred_master_bus_params = keep_master_params
 
         elif self.use_src_separation:
+            # Logic already handled at the start of common_step
+            pass
 
-            ref_mix = batch_stereo_peak_normalize(ref_mix)
-
-            # when using source separation, pass the separated tracks to the model and original mix to loss
-            ref_mix_a = ref_mix[..., :middle_idx]  # this is passed to the model
-            ref_mix_b = ref_mix[..., middle_idx:]  # this is used for loss computation
-            tracks_b = tracks[..., middle_idx:]  # this is passed to the model
-
-            (
-                pred_track_params,
-                pred_fx_bus_params,
-                pred_master_bus_params,
-            ) = self.model(tracks_b, ref_mix_a, track_padding_mask=track_padding)
 
         else:
             # when using a real mix, pass the same mix to model and loss
@@ -418,8 +424,17 @@ class System(pl.LightningModule):
         # for plotting down the line
         sum_mix_b = tracks_b.sum(dim=1, keepdim=True).detach().float().cpu()
         sum_mix_b = batch_stereo_peak_normalize(sum_mix_b)
+
+        # Fix listening experience for reference input
+        ref_mix_a_log = ref_mix_a.detach().float().cpu()
+        
+        # If separated stems are input as 2 channels, sum them for a better listening experience
+        if self.use_src_separation and ref_mix_a_log.shape[1] == 2:
+            ref_mix_a_log = ref_mix_a_log.sum(dim=1, keepdim=True).repeat(1, 2, 1)
+            ref_mix_a_log = batch_stereo_peak_normalize(ref_mix_a_log)
+
         data_dict = {
-            "ref_mix_a": ref_mix_a.detach().float().cpu(),
+            "ref_mix_a": ref_mix_a_log,
             "ref_mix_b_norm": ref_mix_b.detach().float().cpu(),
             "pred_mix_b_norm": pred_mix_b.detach().float().cpu(),
             "sum_mix_b": sum_mix_b,

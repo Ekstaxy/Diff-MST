@@ -35,9 +35,9 @@ trainer:
   gradient_clip_val: 10.0
   devices: 1
   check_val_every_n_epoch: 4
-  max_epochs: 300
+  max_epochs: 500
   # change to log less or more often to wandb
-  log_every_n_steps: 10
+  log_every_n_steps: 50
   accelerator: gpu
   strategy: ddp_find_unused_parameters_true
   sync_batchnorm: true
