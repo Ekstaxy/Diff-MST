@@ -233,7 +233,7 @@ def load_diffmst(config_path: str, ckpt_path: str, map_location: str = "cpu"):
         **config["model"]["init_args"]["mix_console"]["init_args"]
     )
 
-    checkpoint = torch.load(ckpt_path, map_location=map_location)
+    checkpoint = torch.load(ckpt_path, map_location=map_location, weights_only=False)
 
     # load state dicts
     state_dict = {}
