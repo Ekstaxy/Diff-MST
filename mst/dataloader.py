@@ -575,23 +575,23 @@ class PairedMixDataset(torch.utils.data.Dataset):
         base_name = sample["base_name"]
         song_dir = sample["song_dir"]
         
-        # 1. 讀取 Ground Truth 參數 (.pt)
-        params = torch.load(sample["param_path"])
+        # 1. Read Ground Truth 參數 (.pt)
+        params = torch.load(sample["param_path"], weights_only=True)
         
-        # 2. 讀取 Dry Tracks (Track Input)
+        # 2. Read Dry Tracks (Track Input)
         dry_vocal_path = os.path.join(song_dir, f"{base_name}_dry_vocal.wav")
         dry_inst_path = os.path.join(song_dir, f"{base_name}_dry_instrumental.wav")
         
         dry_vocal, _ = torchaudio.load(dry_vocal_path)
         dry_inst, _ = torchaudio.load(dry_inst_path)
 
-        # 確保是單聲道
+        # Make sure it is mono
         if dry_vocal.shape[0] > 1: dry_vocal = dry_vocal.mean(dim=0, keepdim=True)
         if dry_inst.shape[0] > 1: dry_inst = dry_inst.mean(dim=0, keepdim=True)
 
         tracks = torch.cat([dry_inst, dry_vocal], dim=0) # [Other, Vocal]
         
-        # 3. 讀取 Source Separation Estimate (Refer Input)
+        # 3. Read Source Separation Estimate (Refer Input)
         vocals_est_path = os.path.join(song_dir, f"{base_name}_vocals_est.wav")
         other_est_path = os.path.join(song_dir, f"{base_name}_other_est.wav")
         
@@ -603,7 +603,7 @@ class PairedMixDataset(torch.utils.data.Dataset):
         
         est_tracks = torch.cat([other_est, vocals_est], dim=0)
 
-        # 4. 讀取 Ground Truth Mix
+        # 4. Read Ground Truth Mix
         mix_path = os.path.join(song_dir, f"{base_name}_mix.wav")
         true_mix, _ = torchaudio.load(mix_path)
         
