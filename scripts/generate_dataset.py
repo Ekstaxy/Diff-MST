@@ -166,8 +166,8 @@ def process_song(song_dir, args, mixer, separator, output_root):
             use_track_panner=True,
             use_track_eq=True,
             use_track_compressor=True,
-            use_fx_bus=True,
-            use_master_bus=True
+            use_fx_bus=False,
+            use_master_bus=False
         )
         
         # Normalize Mix

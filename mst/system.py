@@ -98,8 +98,8 @@ class System(pl.LightningModule):
         # default
         self.use_track_input_fader = True
         self.use_track_panner = True
-        self.use_track_eq = False
-        self.use_track_compressor = False
+        self.use_track_eq = True
+        self.use_track_compressor = True
         self.use_fx_bus = False
         self.use_master_bus = False
         self.use_output_fader = True

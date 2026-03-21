@@ -642,7 +642,8 @@ class PairedMixDataModule(pl.LightningDataModule):
         length: int = 524288,
         batch_size: int = 32,
         num_workers: int = 0,
-        train_subset_ratio: float = 1.0 
+        train_subset_ratio: float = 1.0,
+        val_subset_ratio: float = 1.0
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -659,7 +660,8 @@ class PairedMixDataModule(pl.LightningDataModule):
             data_dir=self.hparams.data_dir, 
             metadata_file=self.hparams.metadata_file, 
             split="val", 
-            length=self.hparams.length
+            length=self.hparams.length,
+            subset_ratio=self.hparams.val_subset_ratio
         )
 
     def train_dataloader(self):
