@@ -621,9 +621,9 @@ class PairedMixDataset(torch.utils.data.Dataset):
         if current_len > self.length:
             offset = np.random.randint(0, current_len - self.length)
         
-        tracks = process(tracks, self.length, offset)
-        est_tracks = process(est_tracks, self.length, offset)
-        true_mix = process(true_mix, self.length, offset)
+        tracks = process(tracks, self.length, offset)[..., self.length//2:self.length] # 只取後半段
+        est_tracks = process(est_tracks, self.length, offset)[..., :self.length//2]
+        true_mix = process(true_mix, self.length, offset)[..., self.length//2:self.length]
         
         # 5. 給 system.py 的佔位符 (Dummy data)
         stereo_info = torch.tensor([0, 0])
