@@ -1,3 +1,8 @@
+import sys
+sys.modules['flash_attn'] = None
+sys.modules['torchao'] = None
+original_argv = sys.argv.copy()
+sys.argv = [sys.argv[0]]
 import torch
 import numpy as np
 import json
@@ -12,6 +17,7 @@ from mst.loss import CLAPFeatureLoss
 from mst.modules import CLAPTextEncoder
 from mst.ito import ITOptimizer
 
+sys.argv = original_argv
 def parse_args():
     parser = argparse.ArgumentParser()
 
@@ -37,6 +43,7 @@ def parse_args():
     parser.add_argument('--ito_iterations', type=int, default=50, help='Number of iterations for the ITO optimization process.')
     parser.add_argument('--ito_lr', type=float, default=2e-4, help='Learning rate for the ITO optimization process.')
     parser.add_argument('--prompt_str', type=str, default="A well-balanced mix with clear vocals and punchy drums.", help='Text prompt describing the desired mix characteristics for ITO optimization.')
+    parser.add_argument('--neg_str', type=str, default="", help='Negative text prompt describing the undesired mix characteristics for ITO optimization.')
     parser.add_argument('--target_track_idx', type=int, default=0, help='Index of the track to optimize during ITO.')
 
     args = parser.parse_args()
@@ -44,14 +51,19 @@ def parse_args():
 
 def main():
     args = parse_args()
+    print("Arguments:")
+    for arg in vars(args):
+        print(f"{arg}: {getattr(args, arg)}")
 
     # Load the model and CLAP text encoder
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model, mix_console = load_diffmst(
         config_path=args.config, 
-        checkpoint_path=args.checkpoint, 
-        device=device
+        ckpt_path=args.checkpoint, 
+        map_location=device
     )
+    model.to(device)
+    mix_console.to(device)
     clap_text_encoder = CLAPTextEncoder(args.clap_checkpoint).to(device)
     ito_optimizer = ITOptimizer(model, mix_console, clap_checkpoint=args.clap_checkpoint)
 
@@ -126,7 +138,6 @@ def main():
         if vocal_audio.shape[1] < max_length:
             padding = max_length - vocal_audio.shape[1]
             vocal_audio = torch.nn.functional.pad(vocal_audio, (0, padding))
-        # TODO: Remember to handle the shape of inst_audio and vocal_audio.
         tracks = torch.cat([inst_audio, vocal_audio], dim=0)
         
         '''
@@ -189,40 +200,47 @@ def main():
             ) = result
 
         bs, chs, length = pred_mix.shape
+        print(f"Predicted mix shape: {pred_mix.shape}, Predicted mixed tracks shape: {pred_mixed_tracks.shape}")
 
-        # Save the predicted mix to the output directory with the same name as the input song directory
+        song_output_dir = output_dir / song_dir.name
+        song_output_dir.mkdir(parents=True, exist_ok=True)
+
         mix_lufs_db = meter.integrated_loudness(
             pred_mix.squeeze(0).cpu().permute(1, 0).numpy()
         )
         lufs_delta_db = target_lufs_db - mix_lufs_db
         pred_mix = pred_mix * 10 ** (lufs_delta_db / 20)
 
-        mix_filepath = output_dir / f"{song_dir.name}_pred_mix.wav"
+        mix_filepath = song_output_dir / "pred_mix.wav"
         torchaudio.save(mix_filepath, pred_mix.view(chs, -1).cpu(), 44100)
 
-        # Save the predicted mixed tracks to the output directory with the same name as the input song directory
         for track_idx in range(pred_mixed_tracks.shape[1]):
-            track_filepath = output_dir / f"{song_dir.name}_pred_track_{track_idx}.wav"
-            torchaudio.save(track_filepath, pred_mixed_tracks[:, track_idx, :].squeeze(0).cpu(), 44100)
+            track_filepath = song_output_dir / f"pred_track_{track_idx}.wav"
+            torchaudio.save(track_filepath, pred_mixed_tracks.clone().squeeze(0)[:, track_idx, :].cpu(), 44100)
 
-        # ITO optimization process
-        best_mix, best_stems, all_results, min_loss, min_loss_step = ito_optimizer.optimize(
-            mix = pred_mix.clone(),
-            raw_tracks = mix_tracks.clone(),
-            processed_tracks = pred_mixed_tracks.clone(),
-            prompt_str = args.prompt_str,
-            target_track_idx = args.target_track_idx,
-            track_start_idx = 0,
-            length = args.length,
-            num_steps = args.ito_iterations,
-            lr = args.ito_lr
-        )
+        # # ITO optimization process
+        # best_mix, best_stems, all_results, min_loss, min_loss_step = ito_optimizer.optimize(
+        #     mix = pred_mix.clone(),
+        #     raw_tracks = mix_tracks.clone(),
+        #     processed_tracks = pred_mixed_tracks.clone(),
+        #     prompt_str = args.prompt_str,
+        #     neg_str = args.neg_str,
+        #     target_track_idx = args.target_track_idx,
+        #     track_start_idx = 0,
+        #     length = args.length,
+        #     num_steps = args.ito_iterations,
+        #     lr = args.ito_lr
+        # )
 
-        # Save the best mix from ITO optimization
-        best_mix_filepath = output_dir / f"{song_dir.name}_ito_optimized_mix.wav"
-        torchaudio.save(best_mix_filepath, best_mix.view(chs, -1).cpu(), 44100)
+        # # Save the best mix from ITO optimization
+        # best_mix_filepath = output_dir / f"{song_dir.name}_ito_optimized_mix.wav"
+        # torchaudio.save(best_mix_filepath, best_mix.view(chs, -1).cpu(), 44100)
 
-        # Save the best stems from ITO optimization
-        for track_idx in range(best_stems.shape[1]):
-            track_filepath = output_dir / f"{song_dir.name}_ito_optimized_track_{track_idx}.wav"
-            torchaudio.save(track_filepath, best_stems[:, track_idx, :].squeeze(0).cpu(), 44100)
+        # # Save the best stems from ITO optimization
+        # for track_idx in range(best_stems.shape[1]):
+        #     track_filepath = output_dir / f"{song_dir.name}_ito_optimized_track_{track_idx}.wav"
+        #     torchaudio.save(track_filepath, best_stems[:, track_idx, :].squeeze(0).cpu(), 44100)
+
+if __name__ == "__main__":
+    print("====== Inference Script Started ======")
+    main()

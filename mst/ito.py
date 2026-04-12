@@ -21,7 +21,7 @@ class ITOptimizer:
         self.clap_loss_fn = CLAPFeatureLoss(ckpt_path=clap_checkpoint)
         self.text_encoder = CLAPTextEncoder()
 
-    def optimize(self, mix, raw_tracks, processed_tracks, prompt_str, target_track_idx=0, track_start_idx=0, length=882000, num_steps=100, lr=1e-3):
+    def optimize(self, mix, raw_tracks, processed_tracks, prompt_str, neg_str, target_track_idx=0, track_start_idx=0, length=882000, num_steps=100, lr=1e-3, target_lufs_db=-14.0):
         bs, num_tracks, seq_len = raw_tracks.size()
 
         # Validate track_start_idx and length
@@ -78,6 +78,8 @@ class ITOptimizer:
         best_stems = None
         all_results = []
 
+        meter = pyln.Meter(self.sr)
+
         # Optimization loop
         with torch.enable_grad():
             for step in tqdm.tqdm(range(num_steps)):
@@ -113,7 +115,7 @@ class ITOptimizer:
                 target_track_stereo = processed_tracks[:, :, target_track_idx, :]
                 target_track_mono = target_track_stereo.mean(dim=1, keepdim=True)
 
-                clap_loss = self.clap_loss_fn(target_track_mono, prompt_str, sample_rate=self.sr, distance_fn="cosine")
+                clap_loss = self.clap_loss_fn(target_track_mono, prompt_str, sample_rate=self.sr, distance_fn="cosine", neg_target=neg_str)
                 clap_loss.backward()
                 if learnable_target_embedding.grad is not None:
                     optimizer.step()
@@ -129,7 +131,7 @@ class ITOptimizer:
                     best_stems = processed_tracks.clone().detach()
 
                 # Prepare the ITO embedding for the next iteration
-                current_embedings = model.mix_encoder(processed_tracks.clone().view(1, 2*num_tracks, -1)).detach()
+                current_embedings = self.model.mix_encoder(processed_tracks.clone().view(1, 2*num_tracks, -1)).detach()
 
                 # The base embedding for the entire mix
                 # This will be used as a fixed reference during optimization, and only the target track's embedding will be updated
