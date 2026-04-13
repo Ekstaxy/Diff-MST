@@ -89,8 +89,8 @@ def run_diffmst(
     use_track_eq = True
     use_track_compressor = True
     use_fx_bus = False
-    use_master_bus = True
-    use_output_fader = True
+    # use_master_bus = True
+    use_output_fader = False
 
     meter = pyln.Meter(44100)
 

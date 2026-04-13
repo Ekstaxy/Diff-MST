@@ -12,10 +12,11 @@ from mst.loss import CLAPFeatureLoss
 from mst.modules import CLAPTextEncoder
 
 class ITOptimizer:
-    def __init__(self, model, mix_console, sr=44100, clap_checkpoint=None):
+    def __init__(self, model, mix_console, sr=44100, clap_checkpoint=None, device='cuda'):
         self.model = model
         self.mix_console = mix_console
         self.sr = sr
+        self.device = device
 
         print(f"[INFO] Initializing CLAP loss function with checkpoint: {clap_checkpoint}")
         self.clap_loss_fn = CLAPFeatureLoss(ckpt_path=clap_checkpoint)
@@ -49,19 +50,15 @@ class ITOptimizer:
             raise ValueError(f"Invalid target_track_idx {target_track_idx} for {chs} channels.")
 
         with torch.no_grad():
-
             # The initial embedding for the entire mix
             # The shape is (1, 2*num_tracks, emb_dim) because the model expects interleaved L/R channels for each track
             # The base is detached to ensure it doesn't receive gradients during optimization
-            full_base_embedding = self.model.mix_encoder(processed_tracks.clone().view(1, 2*chs, -1))
-            full_base_embedding = full_base_embedding.detach()
-
-        num_tracks_mix = full_base_embedding.size(1) // 2
+            mono_processed_tracks = processed_tracks.mean(dim=1)
+            print(f"[INFO] Mono processed tracks shape for embedding: {mono_processed_tracks.shape}")
+            full_base_embedding = self.model.mix_encoder(mono_processed_tracks.clone()).detach()
 
         # Extract the target embedding and make it learnable
-        target_L = full_base_embedding[0:1, target_track_idx : target_track_idx + 1, :]
-        target_R = full_base_embedding[0:1, target_track_idx + num_tracks_mix : target_track_idx + num_tracks_mix + 1, :]
-        initial_target_feature = torch.cat([target_L, target_R], dim=1)
+        initial_target_feature = full_base_embedding[:, target_track_idx : target_track_idx + 1, :]
         print(f"[INFO] Initial reference feature shape: {initial_target_feature.shape}")
         learnable_target_embedding = torch.nn.Parameter(initial_target_feature, requires_grad=True)
         print(f"[INFO] Learnable target embedding shape: {learnable_target_embedding.shape}")
@@ -71,18 +68,8 @@ class ITOptimizer:
         # This will be used as a fixed reference during optimization, and only the target track's embedding will be updated
         base_embedding = full_base_embedding.clone().detach()
 
-        # Create a mask to isolate the target track's embedding
-        mask = torch.zeros_like(base_embedding)
-        mask[0, target_track_idx, :] = 1.0
-        mask[0, target_track_idx + num_tracks_mix, :] = 1.0
-
-        # The learnable target embedding is expanded to the full mix embedding shape
-        # This ensures that during optimization, only the target track's embedding is updated while the rest of the mix embedding remains fixed
-        learnable_target_embedding_expanded = torch.zeros_like(base_embedding)
-        learnable_target_embedding_expanded[0, target_track_idx, :] = learnable_target_embedding[0, 0, :]
-        learnable_target_embedding_expanded[0, target_track_idx + num_tracks_mix, :] = learnable_target_embedding[0, 1, :]
-
-        ito_embedding = (learnable_target_embedding_expanded * mask) + (base_embedding * (1 - mask))
+        ito_embedding = base_embedding.clone()
+        ito_embedding[0, target_track_idx, :] = learnable_target_embedding[0, 0, :]
         print(f"[INFO] Initial ITO embedding shape: {ito_embedding.shape}")
 
         min_loss = float('inf')
@@ -104,7 +91,7 @@ class ITOptimizer:
                     ref_audio = processed_tracks.detach()
                     ref_audio = ref_audio.view(1, 2*chs, -1)
 
-                print(f"[DEBUG] Step {step}: ref_audio shape: {ref_audio.shape}, ito_embedding shape: {ito_embedding.shape}")
+                # print(f"[DEBUG] Step {step}: ref_audio shape: {ref_audio.shape}, ito_embedding shape: {ito_embedding.shape}")
 
                 result = run_diffmst(
                     mix_tracks.clone(),
@@ -113,7 +100,8 @@ class ITOptimizer:
                     self.mix_console,
                     track_start_idx=track_start_idx,
                     ref_start_idx=track_start_idx,
-                    ito_embedding=ito_embedding
+                    ito_embedding=ito_embedding,
+                    use_master_bus=False
                 )
                 (
                     mix,
@@ -135,7 +123,7 @@ class ITOptimizer:
                 else:
                     print(f"[WARNING] No gradients for learnable_target_embedding at step {step}. Skipping optimizer step.")
 
-                print(f"[INFO] Step {step}: CLAP loss: {clap_loss.item()}")
+                # print(f"[INFO] Step {step}: CLAP loss: {clap_loss.item()}")
 
                 if clap_loss.item() < min_loss:
                     min_loss = clap_loss.item()
@@ -144,27 +132,17 @@ class ITOptimizer:
                     best_stems = processed_tracks.clone().detach()
 
                 # Prepare the ITO embedding for the next iteration
-                current_embedings = self.model.mix_encoder(processed_tracks.clone().view(1, 2*chs, -1)).detach()
+                current_mono_processed = processed_tracks.mean(dim=1)
 
                 # The base embedding for the entire mix
                 # This will be used as a fixed reference during optimization, and only the target track's embedding will be updated
-                base_embedding = current_embedings.detach()
+                base_embedding = self.model.mix_encoder(current_mono_processed).detach()
 
-                # Create a mask to isolate the target track's embedding
-                mask = torch.zeros_like(base_embedding)
-                mask[0, target_track_idx, :] = 1.0
-                mask[0, target_track_idx + num_tracks_mix, :] = 1.0
-
-                # The learnable target embedding is expanded to the full mix embedding shape
-                # This ensures that during optimization, only the target track's embedding is updated while the rest of the mix embedding remains fixed
-                learnable_target_embedding_expanded = torch.zeros_like(base_embedding)
-                learnable_target_embedding_expanded[0, target_track_idx, :] = learnable_target_embedding[0, 0, :]
-                learnable_target_embedding_expanded[0, target_track_idx + num_tracks_mix, :] = learnable_target_embedding[0, 1, :]
-
-                ito_embedding = (learnable_target_embedding_expanded * mask) + (base_embedding * (1 - mask))
+                ito_embedding = base_embedding.clone()
+                ito_embedding[0, target_track_idx, :] = learnable_target_embedding[0, 0, :]
                 
                 mix_lufs_db = meter.integrated_loudness(
-                    mix.clone().detach().squeeze(0).permute(1, 0).numpy()
+                    mix.clone().detach().squeeze(0).cpu().permute(1, 0).numpy()
                 )
                 lufs_delta_db = target_lufs_db - mix_lufs_db
                 mix = mix * 10 ** (lufs_delta_db / 20)

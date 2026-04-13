@@ -25,6 +25,7 @@ from mst.panns import Cnn14
 
 # For Spatial-CLAP and CLAP
 from mst.htsat import create_htsat_model
+from transformers import BertModel, RobertaModel
 from transformers import RobertaModel, RobertaTokenizer
 import laion_clap
 import torchaudio
@@ -1108,23 +1109,37 @@ class TransformerController(torch.nn.Module):
         self.use_fx_bus = use_fx_bus
         self.use_master_bus = use_master_bus
         self.train_only_proj_layer = train_only_proj_layer
-
-        # Project ref_mix_tracks into shape of ref_mix using attention
+        
+        # ==========================================
+        # ⚠️ 【爭議區】特徵聚合器 (用來把多軌壓縮成 2 軌)
+        # ==========================================
+        # 創造兩個「探子」(Query)，一個負責收集左聲道情報，一個負責右聲道
         self.mix_query = torch.nn.Parameter(torch.randn(1, 2, embed_dim))
+        
+        # 建立一個單層的 Transformer，作者把它命名為 proj_layer (這就是讓你誤會的元兇)
         proj_layer = torch.nn.TransformerEncoderLayer(
             d_model=embed_dim, nhead=8, batch_first=True, dropout=0.0
         )
+        # 把上面那個單層複製 3 次，變成一個小型的 Transformer 網路
         self.mix_transformer = torch.nn.TransformerEncoder(
             proj_layer, 
             num_layers=3
         )
+        # 聚合完之後，再過一個線性層微調一下特徵
         self.mix_adapter = torch.nn.Linear(embed_dim, embed_dim)
 
-        self.track_embedding = torch.nn.Parameter(torch.randn(1, 1, embed_dim))
-        self.mix_embedding = torch.nn.Parameter(torch.randn(1, 2, embed_dim))
-        self.fx_bus_embedding = torch.nn.Parameter(torch.randn(1, 1, embed_dim))
-        self.master_bus_embedding = torch.nn.Parameter(torch.randn(1, 1, embed_dim))
+        # ==========================================
+        # 🪪 【身分證區】可學習的 Positional/Role Embeddings
+        # ==========================================
+        # Transformer 本身沒有順序概念，所以要發身分證給不同種類的音軌，它才知道誰是誰
+        self.track_embedding = torch.nn.Parameter(torch.randn(1, 1, embed_dim))   # "我是待處理的目標音軌"
+        self.mix_embedding = torch.nn.Parameter(torch.randn(1, 2, embed_dim))     # "我是提供參考的左右聲道"
+        self.fx_bus_embedding = torch.nn.Parameter(torch.randn(1, 1, embed_dim))  # "我是效果器 Bus"
+        self.master_bus_embedding = torch.nn.Parameter(torch.randn(1, 1, embed_dim)) # "我是總線 Master Bus"
 
+        # ==========================================
+        # 🧠 【主舞台】預測混音參數的核心 Transformer
+        # ==========================================
         encoder_layer = torch.nn.TransformerEncoderLayer(
             d_model=embed_dim, nhead=nhead, batch_first=True, dropout=0.0
         )
@@ -1133,14 +1148,17 @@ class TransformerController(torch.nn.Module):
             num_layers=num_layers,
         )
 
+        # ==========================================
+        # 🎯 【輸出層】把 Transformer 的抽象特徵，轉換成實際的參數數值
+        # ==========================================
         self.track_projection = torch.nn.Linear(embed_dim, num_track_control_params)
         self.fx_bus_projection = torch.nn.Linear(embed_dim, num_fx_bus_control_params)
         self.master_bus_projection = torch.nn.Linear(
             embed_dim, num_master_bus_control_params
         )
 
+        # (以下是作者用來做實驗的開關：只訓練聚合器，或凍結聚合器)
         if self.train_only_proj_layer:
-            # Freeze all parameters except mix projection parts
             for param in self.parameters():
                 param.requires_grad = False
             for param in self.mix_transformer.parameters():
@@ -1176,46 +1194,46 @@ class TransformerController(torch.nn.Module):
         """
         bs, num_tracks, embed_dim = track_embeds.size()
 
-        if mix_embeds.size(1) != 2:
-            # mix_embeds comes in as (bs, 2 * num_tracks, embed_dim)
-            flat_tracks = mix_embeds 
-            left_tracks = flat_tracks[:, :num_tracks, :] # (bs, num_tracks, embed_dim)
-            right_tracks = flat_tracks[:, num_tracks:, :] # (bs, num_tracks, embed_dim)
+        # if mix_embeds.size(1) != 2:
+        #     # mix_embeds comes in as (bs, 2 * num_tracks, embed_dim)
+        #     flat_tracks = mix_embeds 
+        #     left_tracks = flat_tracks[:, :num_tracks, :] # (bs, num_tracks, embed_dim)
+        #     right_tracks = flat_tracks[:, num_tracks:, :] # (bs, num_tracks, embed_dim)
 
-            # 1. Prepare Queries (CLS tokens)
-            # Expand query to batch size: (bs, 1, embed_dim)
-            query_L = self.mix_query[:, 0:1, :].repeat(bs, 1, 1)
-            query_R = self.mix_query[:, 1:2, :].repeat(bs, 1, 1)
+        #     # 1. Prepare Queries (CLS tokens)
+        #     # Expand query to batch size: (bs, 1, embed_dim)
+        #     query_L = self.mix_query[:, 0:1, :].repeat(bs, 1, 1)
+        #     query_R = self.mix_query[:, 1:2, :].repeat(bs, 1, 1)
 
-            # 2. Construct Sequences: [Query, Track1, Track2, ...]
-            # Shape becomes (bs, num_tracks + 1, embed_dim)
-            input_L = torch.cat([query_L, left_tracks], dim=1)
-            input_R = torch.cat([query_R, right_tracks], dim=1)
+        #     # 2. Construct Sequences: [Query, Track1, Track2, ...]
+        #     # Shape becomes (bs, num_tracks + 1, embed_dim)
+        #     input_L = torch.cat([query_L, left_tracks], dim=1)
+        #     input_R = torch.cat([query_R, right_tracks], dim=1)
 
-            # 3. Create Padding Mask
-            # We must prepend 'False' (unmasked) for the query token
-            if track_padding_mask is not None:
-                # track_padding_mask is (bs, num_tracks), True = Padded
-                # Create (bs, 1) of False
-                cls_mask = torch.zeros((bs, 1), dtype=torch.bool, device=track_embeds.device)
+        #     # 3. Create Padding Mask
+        #     # We must prepend 'False' (unmasked) for the query token
+        #     if track_padding_mask is not None:
+        #         # track_padding_mask is (bs, num_tracks), True = Padded
+        #         # Create (bs, 1) of False
+        #         cls_mask = torch.zeros((bs, 1), dtype=torch.bool, device=track_embeds.device)
                 
-                # Concat: [False, mask_t1, mask_t2...]
-                mix_mask = torch.cat([cls_mask, track_padding_mask], dim=1)
-            else:
-                mix_mask = None
+        #         # Concat: [False, mask_t1, mask_t2...]
+        #         mix_mask = torch.cat([cls_mask, track_padding_mask], dim=1)
+        #     else:
+        #         mix_mask = None
 
-            # 4. Pass through Transformer
-            # The Transformer allows tracks to attend to each other AND the query to attend to tracks
-            encoded_L = self.mix_transformer(input_L, src_key_padding_mask=mix_mask)
-            encoded_R = self.mix_transformer(input_R, src_key_padding_mask=mix_mask)
+        #     # 4. Pass through Transformer
+        #     # The Transformer allows tracks to attend to each other AND the query to attend to tracks
+        #     encoded_L = self.mix_transformer(input_L, src_key_padding_mask=mix_mask)
+        #     encoded_R = self.mix_transformer(input_R, src_key_padding_mask=mix_mask)
 
-            # 5. Extract the Query Token (Index 0)
-            # This token now contains the aggregated information
-            left_mix_embed = self.mix_adapter(encoded_L[:, 0:1, :]) 
-            right_mix_embed = self.mix_adapter(encoded_R[:, 0:1, :])    
+        #     # 5. Extract the Query Token (Index 0)
+        #     # This token now contains the aggregated information
+        #     left_mix_embed = self.mix_adapter(encoded_L[:, 0:1, :]) 
+        #     right_mix_embed = self.mix_adapter(encoded_R[:, 0:1, :])    
             
-            # Recombine to (bs, 2, embed_dim)
-            mix_embeds = torch.cat([left_mix_embed, right_mix_embed], dim=1)
+        #     # Recombine to (bs, 2, embed_dim)
+        #     mix_embeds = torch.cat([left_mix_embed, right_mix_embed], dim=1)
             
         # apply learned embeddings to both input embeddings
         track_embeds = track_embeds + self.track_embedding.repeat(bs, num_tracks, 1)

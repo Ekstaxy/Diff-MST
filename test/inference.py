@@ -6,7 +6,7 @@ sys.argv = [sys.argv[0]]
 import torch
 import numpy as np
 import json
-import pathlib
+import pathlib  
 import argparse
 import torchaudio
 import tqdm
@@ -65,7 +65,7 @@ def main():
     model.to(device)
     mix_console.to(device)
     clap_text_encoder = CLAPTextEncoder(args.clap_checkpoint).to(device)
-    ito_optimizer = ITOptimizer(model, mix_console, clap_checkpoint=args.clap_checkpoint)
+    ito_optimizer = ITOptimizer(model, mix_console, clap_checkpoint=args.clap_checkpoint, device=device)
 
     # Tracks processing
     '''
@@ -187,6 +187,7 @@ def main():
                 mix_console,
                 track_start_idx=args.tracks_start_idx,
                 ref_start_idx=args.ref_start_idx,
+                use_master_bus=False
             )
             (
                 pred_mix,
@@ -207,6 +208,7 @@ def main():
         )
         lufs_delta_db = target_lufs_db - mix_lufs_db
         pred_mix = pred_mix * 10 ** (lufs_delta_db / 20)
+        pred_mixed_tracks = pred_mixed_tracks * 10 ** (lufs_delta_db / 20)
 
         mix_filepath = song_output_dir / "pred_mix.wav"
         torchaudio.save(mix_filepath, pred_mix.view(chs, -1).cpu(), 44100)
@@ -218,9 +220,9 @@ def main():
         # ITO optimization process
         if args.ito_iterations > 0:
             best_mix, best_stems, all_results, min_loss, min_loss_step = ito_optimizer.optimize(
-                mix = pred_mix.clone(),                          # Shape: (1, 2, length)
-                raw_tracks = mix_tracks.clone().unsqueeze(0),    # Shape: (1, 2, length)
-                processed_tracks = pred_mixed_tracks.clone(),    # Shape: (1, 2, num_tracks, length)
+                mix = pred_mix.clone().to(device),                          # Shape: (1, 2, length)
+                raw_tracks = mix_tracks.clone().unsqueeze(0).to(device),    # Shape: (1, 2, length)
+                processed_tracks = pred_mixed_tracks.clone().to(device),    # Shape: (1, 2, num_tracks, length)
                 prompt_str = args.prompt_str,
                 neg_str = args.neg_str,
                 target_track_idx = args.target_track_idx,
@@ -230,14 +232,21 @@ def main():
                 lr = args.ito_lr
             )
 
+            mix_lufs_db = meter.integrated_loudness(
+                best_mix.squeeze(0).cpu().permute(1, 0).numpy()
+            )
+            lufs_delta_db = target_lufs_db - mix_lufs_db
+            best_mix = best_mix * 10 ** (lufs_delta_db / 20)
+            best_stems = best_stems * 10 ** (lufs_delta_db / 20)
+
             # Save the best mix from ITO optimization
-            best_mix_filepath = output_dir / f"{song_dir.name}_ito_optimized_mix.wav"
+            best_mix_filepath = song_output_dir / "ito_optimized_mix.wav"
             torchaudio.save(best_mix_filepath, best_mix.view(chs, -1).cpu(), 44100)
 
             # Save the best stems from ITO optimization
             for track_idx in range(best_stems.shape[1]):
-                track_filepath = output_dir / f"{song_dir.name}_ito_optimized_track_{track_idx}.wav"
-                torchaudio.save(track_filepath, best_stems[:, track_idx, :].squeeze(0).cpu(), 44100)
+                track_filepath = song_output_dir / f"ito_optimized_track_{track_idx}.wav"
+                torchaudio.save(track_filepath, best_stems.squeeze(0)[:, track_idx, :].cpu(), 44100)
 
 if __name__ == "__main__":
     print("====== Inference Script Started ======")
