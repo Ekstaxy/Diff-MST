@@ -21,8 +21,21 @@ class ITOptimizer:
         self.clap_loss_fn = CLAPFeatureLoss(ckpt_path=clap_checkpoint)
         self.text_encoder = CLAPTextEncoder()
 
-    def optimize(self, mix, raw_tracks, processed_tracks, prompt_str, neg_str, target_track_idx=0, track_start_idx=0, length=882000, num_steps=100, lr=1e-3, target_lufs_db=-14.0):
-        bs, num_tracks, seq_len = raw_tracks.size()
+    def optimize(
+        self, 
+        mix: torch.Tensor, 
+        raw_tracks: torch.Tensor, 
+        processed_tracks: torch.Tensor, 
+        prompt_str: str, 
+        neg_str: str, 
+        target_track_idx=0, 
+        track_start_idx=0, 
+        length=882000, 
+        num_steps=100, 
+        lr=2e-4, 
+        target_lufs_db=-14.0
+    ):
+        bs, chs, seq_len = raw_tracks.size()
 
         # Validate track_start_idx and length
         if track_start_idx + length > seq_len:
@@ -32,15 +45,15 @@ class ITOptimizer:
         mix_tracks = raw_tracks[..., track_start_idx : track_start_idx + length]
 
         # Validate target_track_idx
-        if target_track_idx < -1 or target_track_idx >= num_tracks:
-            raise ValueError(f"Invalid target_track_idx {target_track_idx} for {num_tracks} tracks.")
+        if target_track_idx < -1 or target_track_idx >= chs:
+            raise ValueError(f"Invalid target_track_idx {target_track_idx} for {chs} channels.")
 
         with torch.no_grad():
 
             # The initial embedding for the entire mix
             # The shape is (1, 2*num_tracks, emb_dim) because the model expects interleaved L/R channels for each track
             # The base is detached to ensure it doesn't receive gradients during optimization
-            full_base_embedding = self.model.mix_encoder(processed_tracks.clone().view(1, 2*num_tracks, -1))
+            full_base_embedding = self.model.mix_encoder(processed_tracks.clone().view(1, 2*chs, -1))
             full_base_embedding = full_base_embedding.detach()
 
         num_tracks_mix = full_base_embedding.size(1) // 2
@@ -89,7 +102,7 @@ class ITOptimizer:
                     ref_audio = mix.detach()
                 else:
                     ref_audio = processed_tracks.detach()
-                    ref_audio = ref_audio.view(1, 2*num_tracks, -1)
+                    ref_audio = ref_audio.view(1, 2*chs, -1)
 
                 print(f"[DEBUG] Step {step}: ref_audio shape: {ref_audio.shape}, ito_embedding shape: {ito_embedding.shape}")
 
@@ -131,7 +144,7 @@ class ITOptimizer:
                     best_stems = processed_tracks.clone().detach()
 
                 # Prepare the ITO embedding for the next iteration
-                current_embedings = self.model.mix_encoder(processed_tracks.clone().view(1, 2*num_tracks, -1)).detach()
+                current_embedings = self.model.mix_encoder(processed_tracks.clone().view(1, 2*chs, -1)).detach()
 
                 # The base embedding for the entire mix
                 # This will be used as a fixed reference during optimization, and only the target track's embedding will be updated
@@ -159,7 +172,7 @@ class ITOptimizer:
                 all_results.append({
                     'step': step + 1,
                     'loss': clap_loss.item(),
-                    'stems': processed_tracks.cpu(),
+                    'stems': processed_tracks.detach().cpu(),
                     'params': pred_track_param_dict,
                 })
 
