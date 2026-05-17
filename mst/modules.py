@@ -68,6 +68,8 @@ class MixStyleTransferModel(torch.nn.Module):
         text_encoder: torch.nn.Module,
         controller: torch.nn.Module,
         sum_and_diff: bool = False,
+        track_drop_out: float = 0.0,
+        ref_drop_out: float = 0.0,
     ) -> None:
         super().__init__()
         self.track_encoder = track_encoder
@@ -75,13 +77,15 @@ class MixStyleTransferModel(torch.nn.Module):
         self.text_encoder = text_encoder
         self.controller = controller
         self.sum_and_diff = sum_and_diff
+        self.track_embed_dropout = torch.nn.Dropout(track_drop_out)
+        self.ref_embed_dropout = torch.nn.Dropout(ref_drop_out)
 
     def forward(
         self,
         tracks: torch.Tensor,
         ref_mix: torch.Tensor,
-        text: Optional[tuple] = None,       
-        interpolation: str = "linear",               
+        text: str = None,       
+        target_track_idx: int = None,            
         ito_modified_embedding: torch.Tensor = None,          
         track_padding_mask: Optional[torch.Tensor] = None,
     ):
@@ -90,60 +94,46 @@ class MixStyleTransferModel(torch.nn.Module):
         # first process the tracks
         track_embeds = self.track_encoder(tracks.view(bs * num_tracks, 1, -1))
         track_embeds = track_embeds.view(bs, num_tracks, -1)  # restore
+        track_embeds = self.track_embed_dropout(track_embeds)
 
         # compute mid/side from the reference mix
-        if self.mix_encoder.__class__.__name__ in ["SpatialCLAPEncoder"]:
-            mix_embed = self.mix_encoder(ref_mix)
-            mix_embeds = mix_embed.unsqueeze(1).repeat(1, 2, 1)
-        elif self.mix_encoder.__class__.__name__ in ["CLAPEncoder"]:
-            mix_embeds = self.mix_encoder(ref_mix)   
-        elif self.sum_and_diff:
-            ref_mix_mid = ref_mix.sum(dim=1)
-            ref_mix_side = ref_mix[..., 0:1, :] - ref_mix[..., 1:2, :]
-
-            # process the reference mix
-
-            mid_embeds = self.mix_encoder(ref_mix_mid)
-            side_embeds = self.mix_encoder(ref_mix_side)
-            mix_embeds = torch.stack((mid_embeds, side_embeds), dim=1)
-        else:
-            mix_embeds = self.mix_encoder(ref_mix.view(bs * 2, 1, -1))
-            mix_embeds = mix_embeds.view(bs, 2, -1)  # restore
-
-        # ITO replace text optimization
         if ito_modified_embedding is not None:
             mix_embeds = ito_modified_embedding
 
-        # # Text optimization
-        # if text is not None:
-        #     track_idx, text_alpha, style_alpha, text_prompt, is_panning = text
-        #     left_embed = self.text_encoder(text_prompt[0]).squeeze(0)
-        #     right_embed = self.text_encoder(text_prompt[1]).squeeze(0)  
+        else:
+            if self.mix_encoder.__class__.__name__ in ["SpatialCLAPEncoder"]:
+                mix_embed = self.mix_encoder(ref_mix)
+                mix_embeds = mix_embed.unsqueeze(1).repeat(1, 2, 1)
 
-        #     if is_panning:
-        #         text_embed = [
-        #             linear_interpolation(left_embed, right_embed, text_alpha),
-        #             linear_interpolation(left_embed, right_embed, 1 - text_alpha)
-        #         ]
+            elif self.mix_encoder.__class__.__name__ in ["CLAPEncoder"]:
+                mix_embeds = self.mix_encoder(ref_mix)   
+                
+            elif self.sum_and_diff:
+                ref_mix_mid = ref_mix.sum(dim=1)
+                ref_mix_side = ref_mix[..., 0:1, :] - ref_mix[..., 1:2, :]
 
-        #         track_idx = track_idx if track_idx >= 0 else 0
-        #         num_tracks_mix = mix_embeds.size(1) // 2
+                # process the reference mix
+                mid_embeds = self.mix_encoder(ref_mix_mid)
+                side_embeds = self.mix_encoder(ref_mix_side)
+                mix_embeds = torch.stack((mid_embeds, side_embeds), dim=1)
+            else:
+                mix_embeds = self.mix_encoder(ref_mix.view(bs * 2, 1, -1))
+                mix_embeds = mix_embeds.view(bs, 2, -1)  # restore
 
-        #         for i in range(2):
-        #             mix_embeds_selected = mix_embeds[0, track_idx + i * num_tracks_mix, :]  # select the embed for the specified track
-        #             mix_embeds[0, track_idx + i * num_tracks_mix, :] = linear_interpolation(mix_embeds_selected, text_embed[i], style_alpha)
-        #     else:
-        #         text_embed = linear_interpolation(left_embed, right_embed, text_alpha)
+            # 在這裡把目標軌道的 Audio embedding 換成 Text embedding
+            if self.text_encoder is not None and text is not None:
+                text_embeds = self.text_encoder(text)  # (1, embed_dim)
+                if target_track_idx is not None:
+                    # 使用 clone() 避免 in-place 操作可能導致的梯度報錯
+                    mix_embeds = mix_embeds.clone()
+                    # 將 batch 內所有這條聲音的 reference 換成 text_embeds
+                    mix_embeds[:, target_track_idx, :] = text_embeds
+                else:
+                    # 若沒有特別指定軌道，則全部取代為 text_embeds 
+                    mix_embeds = text_embeds.unsqueeze(1).repeat(1, mix_embeds.size(1), 1)
 
-        #         track_idx = track_idx if track_idx >= 0 else 0
-        #         num_tracks_mix = mix_embeds.size(1) // 2
-        #         print(f"track_idx: {track_idx}, num_tracks_mix: {num_tracks_mix}")
+        mix_embeds = self.ref_embed_dropout(mix_embeds)
 
-        #         for i in range(2):
-        #             mix_embeds_selected = mix_embeds[0, track_idx + i * num_tracks_mix, :]  # select the embed for the specified track
-        #             mix_embeds[0, track_idx + i * num_tracks_mix, :] = linear_interpolation(mix_embeds_selected, text_embed, style_alpha)
-        
-        # controller will predict mix parameters for each stem based on embeds
         track_params, fx_bus_params, master_bus_params = self.controller(
             track_embeds,
             mix_embeds,
@@ -1566,5 +1556,5 @@ class CLAPTextEncoder(nn.Module):
         Returns:
             text embeddings: Torch tensor of shape (1, embed_dim)
         """
-        X = self.model.get_text_embedding([x])
+        X = self.model.get_text_embedding([x], use_tensor=True)
         return X

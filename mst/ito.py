@@ -29,6 +29,7 @@ class ITOptimizer:
         processed_tracks: torch.Tensor, 
         prompt_str: str, 
         neg_str: str, 
+        audio: torch.Tensor = None,
         target_track_idx=0, 
         track_start_idx=0, 
         length=882000, 
@@ -71,6 +72,16 @@ class ITOptimizer:
         ito_embedding = base_embedding.clone()
         ito_embedding[0, target_track_idx, :] = learnable_target_embedding[0, 0, :]
         print(f"[INFO] Initial ITO embedding shape: {ito_embedding.shape}")
+
+        with torch.no_grad():
+            init_target_track_stereo = processed_tracks[:, :, target_track_idx, track_start_idx : track_start_idx + length]
+            init_target_track_mono = init_target_track_stereo.mean(dim=1, keepdim=True)
+            if audio is not None:
+                init_audio_ref = audio[:, target_track_idx:target_track_idx+1, track_start_idx : track_start_idx + length] if audio.shape[-1] > length else audio[:, target_track_idx:target_track_idx+1, :]
+                init_loss = self.clap_loss_fn(init_target_track_mono, init_audio_ref, sample_rate=self.sr, distance_fn="cosine", neg_target=None)
+            else:
+                init_loss = self.clap_loss_fn(init_target_track_mono, prompt_str, sample_rate=self.sr, distance_fn="cosine", neg_target=neg_str)
+            print(f"[INFO] Initial Loss (Step 0 / Before ITO): {init_loss.item():.4f}")
 
         min_loss = float('inf')
         min_loss_step = 0
@@ -116,7 +127,13 @@ class ITOptimizer:
                 target_track_stereo = processed_tracks[:, :, target_track_idx, :]
                 target_track_mono = target_track_stereo.mean(dim=1, keepdim=True)
 
-                clap_loss = self.clap_loss_fn(target_track_mono, prompt_str, sample_rate=self.sr, distance_fn="cosine", neg_target=neg_str)
+                if audio is not None:
+                    # audio 的 shape 是 (1, num_tracks, length)
+                    target_audio_ref = audio[:, target_track_idx:target_track_idx+1, :]
+                    clap_loss = self.clap_loss_fn(target_track_mono, target_audio_ref, sample_rate=self.sr, distance_fn="cosine", neg_target=None)
+                else:
+                    clap_loss = self.clap_loss_fn(target_track_mono, prompt_str, sample_rate=self.sr, distance_fn="cosine", neg_target=neg_str)
+                
                 clap_loss.backward()
                 if learnable_target_embedding.grad is not None:
                     optimizer.step()
@@ -131,12 +148,11 @@ class ITOptimizer:
                     best_mix = mix.clone().detach()
                     best_stems = processed_tracks.clone().detach()
 
-                # Prepare the ITO embedding for the next iteration
-                current_mono_processed = processed_tracks.mean(dim=1)
-
-                # The base embedding for the entire mix
-                # This will be used as a fixed reference during optimization, and only the target track's embedding will be updated
-                base_embedding = self.model.mix_encoder(current_mono_processed).detach()
+                # --- (已被註解掉) 在這裡不應該每回合重新計算 base_embedding ---
+                # 如果每回合把自己剛剛預測的結果重新送進 mix_encoder，會產生嚴重飄移 (feedback loop)
+                # current_mono_processed = processed_tracks.mean(dim=1)
+                # base_embedding = self.model.mix_encoder(current_mono_processed).detach()
+                # -----------------------------------------------------------
 
                 ito_embedding = base_embedding.clone()
                 ito_embedding[0, target_track_idx, :] = learnable_target_embedding[0, 0, :]

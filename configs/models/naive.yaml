@@ -29,6 +29,8 @@ model:
     model:
       class_path: mst.modules.MixStyleTransferModel
       init_args:
+        track_drop_out: 0.85
+        ref_drop_out: 0.85
         # track_encoder: 
         #   class_path: mst.modules.SpectrogramEncoder
         #   init_args:

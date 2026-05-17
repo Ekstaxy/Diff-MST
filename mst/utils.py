@@ -53,8 +53,8 @@ def run_diffmst(
     ref: torch.Tensor,
     model: torch.nn.Module,
     mix_console: torch.nn.Module,
-    text: Optional[tuple] = None,
-    interpolation: str = "linear",
+    text: str = None,
+    target_track_idx: int = None,
     track_start_idx: int = 0,
     ref_start_idx: int = 0,
     ito_embedding: torch.Tensor = None,
@@ -70,7 +70,7 @@ def run_diffmst(
         ref (Tensor): Reference mix with shape (bs, 2, seq_len).
         model (torch.nn.Module): MixStyleTransferModel instance.
         mix_console (torch.nn.Module): MixConsole instance.
-        text (tuple, optional): Tuple of text strings with settings. (track_idx, weight, text). Default: None.
+        text (str, optional): Text string with settings. Default: None.
         track_start_idx (int, optional): Start index of the track to use. Default: 0.
         ref_start_idx (int, optional): Start index of the reference mix to use. Default: 0.
         use_master_bus (bool, optional): Whether to use the master bus. Default: True.
@@ -132,20 +132,8 @@ def run_diffmst(
 
     #  ---- run model to estimate mix parmaeters using analysis audio ----
     pred_track_params, pred_fx_bus_params, pred_master_bus_params = model(
-        norm_analysis_tracks, analysis_ref, text=text, interpolation=interpolation, ito_modified_embedding=ito_embedding
+        norm_analysis_tracks, analysis_ref, text=text, target_track_idx=target_track_idx, ito_modified_embedding=ito_embedding
     )
-    
-    # Master bus control with text
-    if text is not None and text[0] == -1:
-        if prev_track_param_dict is None:
-            assert False, "Previous track parameters must be provided when controlling master bus with text."
-        pred_track_params = prev_track_param_dict
-        
-    # Track control with text
-    elif text is not None and text[0] >= 0:
-        if prev_master_bus_param_dict is None:
-            assert False, "Previous master bus parameters must be provided when controlling track with text."
-        pred_master_bus_params = prev_master_bus_param_dict
 
     (
         pred_mixed_tracks,

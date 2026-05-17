@@ -13,6 +13,7 @@ trainer:
     - class_path: mst.callbacks.audio.LogAudioCallback
       init_args:
         use_separate_tracks: false
+        num_batches: 4  # Decrease this number to save fewer audio files during each validation run
     - class_path: pytorch_lightning.callbacks.ModelSummary
       init_args: 
         max_depth: 2
@@ -35,7 +36,7 @@ trainer:
   gradient_clip_val: 10.0
   devices: 1
   check_val_every_n_epoch: 1
-  val_check_interval: 0.2
+  val_check_interval: 1.0
   limit_val_batches: 0.2
   max_epochs: 500
   # change to log less or more often to wandb
