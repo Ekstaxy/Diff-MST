@@ -1,0 +1,112 @@
+model:
+  class_path: mst.system.System
+  init_args:
+    generate_mix: false
+    use_separate_tracks: false
+    use_src_separation: true
+    active_eq_epoch: 0
+    active_compressor_epoch: 0
+    active_fx_bus_epoch: 1000
+    active_master_bus_epoch: 1000
+
+    use_track_loss : false
+    use_mix_loss : true
+    use_param_loss : false
+
+    mix_fn: mst.mixing.naive_random_mix
+    mix_console:
+      class_path: mst.modules.AdvancedMixConsole
+      init_args:
+        sample_rate: 44100
+        input_min_gain_db: -48.0
+        input_max_gain_db: 48.0
+        output_min_gain_db: -48.0
+        output_max_gain_db: 48.0
+        eq_min_gain_db: -12.0
+        eq_max_gain_db: 12.0
+        min_pan: 0.0
+        max_pan: 1.0
+    model:
+      class_path: mst.modules.MixStyleTransferModel
+      init_args:
+        track_drop_out: 0.85
+        ref_drop_out: 0.85
+        text_drop_out: 0.3
+        track_encoder: 
+          class_path: mst.modules.SpectrogramEncoder
+          init_args:
+            embed_dim: 512
+            n_fft: 2048
+            hop_length: 512
+            input_batchnorm: false
+            freeze: false
+        # track_encoder:
+        #   class_path: mst.modules.SpatialCLAPEncoder
+        #   init_args:
+        #     joint_embed_shape: 512
+        #     pretrained: true
+        #     sample_rate: 44100
+        # track_encoder:
+        #   class_path: mst.modules.CLAPEncoder
+        #   init_args:
+        #     sample_rate: 44100
+        #     freeze: true
+        #     ckpt_path: /home/ajchen2005/music_audioset_epoch_15_esc_90.14.pt
+        #     htsat_base: true
+        mix_encoder: 
+          class_path: mst.modules.SpectrogramEncoder
+          init_args:
+            embed_dim: 512
+            n_fft: 2048
+            hop_length: 512
+            input_batchnorm: false
+            freeze: false
+        # mix_encoder:
+        #   class_path: mst.modules.SpatialCLAPEncoder
+        #   init_args:
+        #     joint_embed_shape: 512
+        #     pretrained: true
+        #     sample_rate: 44100
+        # mix_encoder:
+        #   class_path: mst.modules.CLAPEncoder
+        #   init_args:
+        #     sample_rate: 44100
+        #     freeze: true
+        #     ckpt_path: /home/ajchen2005/music_audioset_epoch_15_esc_90.14.pt
+        #     htsat_base: true
+
+        text_encoder:
+          class_path: mst.modules.CLAPSequenceTextEncoder
+          init_args:
+            # ckpt_path: /home/ajchen2005/music_audioset_epoch_15_esc_90.14.pt
+            embed_dim: 512
+            model_name: "roberta-base"
+            finetune: True
+        
+        controller:
+          class_path: mst.modules.TransformerController
+          init_args:
+            embed_dim: 512
+            num_track_control_params: 27
+            num_fx_bus_control_params: 25
+            num_master_bus_control_params: 26
+            num_layers: 12
+            nhead: 8
+            train_only_proj_layer: false
+            freeze_proj_layer: true
+       
+    loss: 
+      class_path: auraloss.freq.SumAndDifferenceSTFTLoss
+      init_args:
+        fft_sizes: 
+        - 512
+        - 2048
+        - 8192
+        hop_sizes: 
+        - 256 
+        - 1024
+        - 4096
+        win_lengths:
+        - 512
+        - 2048
+        - 8192

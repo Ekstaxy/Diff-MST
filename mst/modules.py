@@ -1,3 +1,4 @@
+from typing import Union
 import math
 import torch
 import torch.nn as nn
@@ -70,6 +71,7 @@ class MixStyleTransferModel(torch.nn.Module):
         sum_and_diff: bool = False,
         track_drop_out: float = 0.0,
         ref_drop_out: float = 0.0,
+        text_drop_out: float = 0.0,
     ) -> None:
         super().__init__()
         self.track_encoder = track_encoder
@@ -79,12 +81,13 @@ class MixStyleTransferModel(torch.nn.Module):
         self.sum_and_diff = sum_and_diff
         self.track_embed_dropout = torch.nn.Dropout(track_drop_out)
         self.ref_embed_dropout = torch.nn.Dropout(ref_drop_out)
+        self.text_embed_dropout = torch.nn.Dropout(text_drop_out)
 
     def forward(
         self,
         tracks: torch.Tensor,
         ref_mix: torch.Tensor,
-        text: str = None,       
+        text=None,       
         target_track_idx: int = None,            
         ito_modified_embedding: torch.Tensor = None,          
         track_padding_mask: Optional[torch.Tensor] = None,
@@ -95,6 +98,9 @@ class MixStyleTransferModel(torch.nn.Module):
         track_embeds = self.track_encoder(tracks.view(bs * num_tracks, 1, -1))
         track_embeds = track_embeds.view(bs, num_tracks, -1)  # restore
         track_embeds = self.track_embed_dropout(track_embeds)
+
+        text_seqs = None
+        text_padding_mask = None
 
         # compute mid/side from the reference mix
         if ito_modified_embedding is not None:
@@ -116,21 +122,36 @@ class MixStyleTransferModel(torch.nn.Module):
                 mid_embeds = self.mix_encoder(ref_mix_mid)
                 side_embeds = self.mix_encoder(ref_mix_side)
                 mix_embeds = torch.stack((mid_embeds, side_embeds), dim=1)
+            # else:
+            #     mix_embeds = self.mix_encoder(ref_mix.view(bs * 2, 1, -1))
+            #     mix_embeds = mix_embeds.view(bs, 2, -1)  # restore
             else:
-                mix_embeds = self.mix_encoder(ref_mix.view(bs * 2, 1, -1))
-                mix_embeds = mix_embeds.view(bs, 2, -1)  # restore
+                num_ref_channels = ref_mix.size(1)
+                mix_embeds = self.mix_encoder(ref_mix.view(bs * num_ref_channels, 1, -1))
+                mix_embeds = mix_embeds.view(bs, num_ref_channels, -1)  # restore
 
-            # 在這裡把目標軌道的 Audio embedding 換成 Text embedding
+            # 在這裡處理 Text 
             if self.text_encoder is not None and text is not None:
-                text_embeds = self.text_encoder(text)  # (1, embed_dim)
-                if target_track_idx is not None:
-                    # 使用 clone() 避免 in-place 操作可能導致的梯度報錯
-                    mix_embeds = mix_embeds.clone()
-                    # 將 batch 內所有這條聲音的 reference 換成 text_embeds
-                    mix_embeds[:, target_track_idx, :] = text_embeds
+                # 把字串直接丟進 text_encoder，內部會自動處理 Tokenizer 與 Mask
+                text_out = self.text_encoder(text)
+                
+                # 支援新版的 Sequence Based (回傳包含 seq_features 與 padding_mask 的 dict)
+                if isinstance(text_out, dict) and "seq_features" in text_out:
+                    text_seqs = text_out["seq_features"]
+                    text_padding_mask = text_out.get("padding_mask", None)
+                    text_seqs = self.text_embed_dropout(text_seqs)
                 else:
-                    # 若沒有特別指定軌道，則全部取代為 text_embeds 
-                    mix_embeds = text_embeds.unsqueeze(1).repeat(1, mix_embeds.size(1), 1)
+                    # 舊版單一 Embedding 操作 (若不是 dict，代表是原版的 CLAP)
+                    text_embeds = text_out  # shape: (1, embed_dim) 或 (bs, embed_dim)
+                    text_embeds = self.text_embed_dropout(text_embeds)
+                    if target_track_idx is not None:
+                        # 使用 clone() 避免 in-place 操作可能導致的梯度報錯
+                        mix_embeds = mix_embeds.clone()
+                        # 將 batch 內所有這條聲音的 reference 換成 text_embeds
+                        mix_embeds[:, target_track_idx, :] = text_embeds
+                    else:
+                        # 若沒有特別指定軌道，則全部取代為 text_embeds 
+                        mix_embeds = text_embeds.unsqueeze(1).repeat(1, mix_embeds.size(1), 1)
 
         mix_embeds = self.ref_embed_dropout(mix_embeds)
 
@@ -138,6 +159,8 @@ class MixStyleTransferModel(torch.nn.Module):
             track_embeds,
             mix_embeds,
             track_padding_mask,
+            text_seqs=text_seqs,
+            text_padding_mask=text_padding_mask,
         )
 
         return (
@@ -1064,6 +1087,141 @@ class SpectrogramEncoder(torch.nn.Module):
         return embeds
 
 
+# ============================================================================================================================
+# CLAP-based Text Encoder (Generates Sequence Output)
+# ============================================================================================================================
+from transformers import AutoModel, AutoConfig, AutoTokenizer
+
+class CLAPSequenceTextEncoder(torch.nn.Module):
+    def __init__(
+        self,
+        embed_dim: int = 512,
+        model_name: str = "roberta-base",
+        ckpt_path: Optional[str] = None,
+        finetune: bool = False,
+    ) -> None:
+        super().__init__()
+        self.embed_dim = embed_dim
+        
+        # 將 Tokenizer 包裝在內部，外部只要餵字串就好
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        
+        if ckpt_path is not None:
+            # 載入指定的 Checkpoint
+            self.model = AutoModel.from_pretrained(ckpt_path)
+            print(f"[CLAPSequenceTextEncoder] Loaded pretrained weights from {ckpt_path}")
+        else:
+            # 從指定的 model_name 載入（可選擇從 HuggingFace Hub 載入或隨機初始化）
+            # 這裡簡單處理：直接用這名字載入 config 並隨機初始化
+            config = AutoConfig.from_pretrained(model_name)
+            self.model = AutoModel.from_config(config)
+            print(f"[CLAPSequenceTextEncoder] Initialized fresh weights using config {model_name}")
+            
+        # 決定是否凍結模型參數
+        for param in self.model.parameters():
+            param.requires_grad = finetune
+            
+        # CLAP text encoder 輸出的 hidden size (例如 roberta-base 是 768)
+        hidden_size = self.model.config.hidden_size
+        
+        # 降維/升維到與 Diff-MST controller shape 吻合
+        self.proj = torch.nn.Linear(hidden_size, embed_dim)
+
+    def forward(self, text: Union[str, list[str]]) -> dict:
+        """
+        Args:
+            text: A single string or a list of strings.
+        Returns:
+            dict containing:
+                - "seq_features": (bs, seq_len, embed_dim)
+                - "padding_mask": (bs, seq_len) boolean tensor where True means padded.
+        """
+        if isinstance(text, str):
+            text = [text]
+            
+        device = next(self.model.parameters()).device
+        
+        # 幫你把字串轉成模型看得懂的 input_ids 與 attention_mask
+        inputs = self.tokenizer(text, padding="max_length", truncation=True, max_length=64, return_tensors="pt").to(device)
+
+        # (bs, seq_len, hidden_size)
+        outputs = self.model(input_ids=inputs["input_ids"], attention_mask=inputs["attention_mask"])
+        
+        # 使用序列的每個 token
+        last_hidden_state = outputs.last_hidden_state
+        seq_features = self.proj(last_hidden_state)
+        
+        # Cross-Attention 需要知道哪裡被加了空白 0 (Padding)，True 代表是要被忽略的 Padding
+        padding_mask = (inputs["attention_mask"] == 0)
+        
+        return {
+            "seq_features": seq_features,
+            "padding_mask": padding_mask
+        }
+
+
+# ============================================================================================================================
+# Track-to-Text Control Block
+# ============================================================================================================================
+class TrackTextControlBlock(torch.nn.Module):
+    """
+    這是一個客製化的 Transformer Block，流程：
+    1. Audio Tracks 先經過 Self-Attention (知道彼此存在)
+    2. Audio Tracks 經過 Cross-Attention，去尋找 Text Sequence 裡的資訊
+    3. Feed Forward (MLP)
+    """
+    def __init__(self, embed_dim: int, nhead: int, dropout: float = 0.0):
+        super().__init__()
+        # 1. 音軌與音軌的 Self-Attention
+        self.self_attn = torch.nn.MultiheadAttention(embed_dim, nhead, dropout=dropout, batch_first=True)
+        # 2. 音軌去查詢文字的 Cross-Attention
+        self.cross_attn = torch.nn.MultiheadAttention(embed_dim, nhead, dropout=dropout, batch_first=True)
+        
+        # 3. 典型的 Transformer FFN 層
+        self.linear1 = torch.nn.Linear(embed_dim, 2048)
+        self.dropout = torch.nn.Dropout(dropout)
+        self.linear2 = torch.nn.Linear(2048, embed_dim)
+
+        self.norm1 = torch.nn.LayerNorm(embed_dim)
+        self.norm2 = torch.nn.LayerNorm(embed_dim)
+        self.norm3 = torch.nn.LayerNorm(embed_dim)
+        self.dropout1 = torch.nn.Dropout(dropout)
+        self.dropout2 = torch.nn.Dropout(dropout)
+        self.dropout3 = torch.nn.Dropout(dropout)
+
+        self.activation = torch.nn.ReLU()
+
+    def forward(self, track_embeds: torch.Tensor, text_embeds: Optional[torch.Tensor], 
+                track_padding_mask: Optional[torch.Tensor] = None, 
+                text_padding_mask: Optional[torch.Tensor] = None):
+        """
+        track_embeds: 主角 Query (bs, num_tracks, embed_dim)
+        text_embeds: 被參考的 Key/Value (bs, seq_len, embed_dim)
+        """
+        # -- 1. Self Attention (Track -> Track) --
+        # 如果 Query 是 track_embeds，Key/Value 也是，這層用來跟其他音軌溝通混音策略
+        src2 = self.self_attn(track_embeds, track_embeds, track_embeds, 
+                              key_padding_mask=track_padding_mask)[0]
+        track_embeds = track_embeds + self.dropout1(src2)
+        track_embeds = self.norm1(track_embeds)
+        
+        # -- 2. Cross Attention (Track -> Text) --
+        # 如果 text_embeds 沒有給，就略過 (為了相容原版 Config，讓它如果沒吃字串也不會報錯)
+        if text_embeds is not None:
+            # Query = track_embeds, Key/Value = text_embeds
+            src2 = self.cross_attn(track_embeds, text_embeds, text_embeds, 
+                                   key_padding_mask=text_padding_mask)[0]
+            track_embeds = track_embeds + self.dropout2(src2)
+            track_embeds = self.norm2(track_embeds)
+
+        # -- 3. Feed Forward (MLP) --
+        src2 = self.linear2(self.dropout(self.activation(self.linear1(track_embeds))))
+        track_embeds = track_embeds + self.dropout3(src2)
+        track_embeds = self.norm3(track_embeds)
+        
+        return track_embeds
+
+
 class TransformerController(torch.nn.Module):
     def __init__(
         self,
@@ -1123,20 +1281,27 @@ class TransformerController(torch.nn.Module):
         # ==========================================
         # Transformer 本身沒有順序概念，所以要發身分證給不同種類的音軌，它才知道誰是誰
         self.track_embedding = torch.nn.Parameter(torch.randn(1, 1, embed_dim))   # "我是待處理的目標音軌"
-        self.mix_embedding = torch.nn.Parameter(torch.randn(1, 2, embed_dim))     # "我是提供參考的左右聲道"
+        self.mix_embedding = torch.nn.Parameter(torch.randn(1, 4, embed_dim))     # "我是提供參考的聲道(支援到4軌)"
         self.fx_bus_embedding = torch.nn.Parameter(torch.randn(1, 1, embed_dim))  # "我是效果器 Bus"
         self.master_bus_embedding = torch.nn.Parameter(torch.randn(1, 1, embed_dim)) # "我是總線 Master Bus"
 
         # ==========================================
         # 🧠 【主舞台】預測混音參數的核心 Transformer
         # ==========================================
-        encoder_layer = torch.nn.TransformerEncoderLayer(
-            d_model=embed_dim, nhead=nhead, batch_first=True, dropout=0.0
-        )
-        self.transformer_encoder = torch.nn.TransformerEncoder(
-            encoder_layer,
-            num_layers=num_layers,
-        )
+        # 保留原版寫法當參考
+        # encoder_layer = torch.nn.TransformerEncoderLayer(
+        #     d_model=embed_dim, nhead=nhead, batch_first=True, dropout=0.0
+        # )
+        # self.transformer_encoder = torch.nn.TransformerEncoder(
+        #     encoder_layer,
+        #     num_layers=num_layers,
+        # )
+
+        # 改用我們特製的支援 Text-Cross Attention 區塊
+        self.transformer_blocks = torch.nn.ModuleList([
+            TrackTextControlBlock(embed_dim, nhead, dropout=0.0)
+            for _ in range(num_layers)
+        ])
 
         # ==========================================
         # 🎯 【輸出層】把 Transformer 的抽象特徵，轉換成實際的參數數值
@@ -1169,6 +1334,8 @@ class TransformerController(torch.nn.Module):
         track_embeds: torch.torch.Tensor,
         mix_embeds: torch.torch.Tensor,
         track_padding_mask: Optional[torch.Tensor] = None,
+        text_seqs: Optional[torch.Tensor] = None,          # <--- 新增: 從 Text Encoder 來的文字序列特徵 shape: (bs, seq_len, embed_dim)
+        text_padding_mask: Optional[torch.Tensor] = None,  # <--- 新增: 給 Cross-Attention 用的文字 padding mask
     ):
         """Predict mix parameters given track and reference mix embeddings.
 
@@ -1227,7 +1394,7 @@ class TransformerController(torch.nn.Module):
             
         # apply learned embeddings to both input embeddings
         track_embeds = track_embeds + self.track_embedding.repeat(bs, num_tracks, 1)
-        mix_embeds = mix_embeds + self.mix_embedding.repeat(bs, 1, 1)
+        mix_embeds = mix_embeds + self.mix_embedding[:, :mix_embeds.size(1), :].repeat(bs, 1, 1)
 
         # concat embeds into single "sequence"
         embeds = torch.cat((track_embeds, mix_embeds), dim=1)  # bs, seq_len, embed_dim
@@ -1239,15 +1406,28 @@ class TransformerController(torch.nn.Module):
             track_padding_mask = torch.cat(
                 (
                     track_padding_mask,
-                    torch.zeros((bs, 4), dtype=torch.bool).type_as(track_padding_mask),
+                    torch.zeros((bs, mix_embeds.size(1) + 2), dtype=torch.bool).type_as(track_padding_mask),
                 ),
                 dim=1,
             )
 
         # generate output embeds with transformer, project and bound 0 - 1
-        pred_params = self.transformer_encoder(
-            embeds, src_key_padding_mask=track_padding_mask
-        )
+        
+        # 註解原版推論法：
+        # pred_params = self.transformer_encoder(
+        #     embeds, src_key_padding_mask=track_padding_mask
+        # )
+        
+        # 新版推論法：手工走過每一層 TrackTextControlBlock
+        pred_params = embeds
+        for block in self.transformer_blocks:
+            pred_params = block(
+                track_embeds=pred_params,
+                text_embeds=text_seqs,
+                track_padding_mask=track_padding_mask,
+                text_padding_mask=text_padding_mask
+            )
+
         pred_track_params = torch.sigmoid(
             self.track_projection(pred_params[:, :num_tracks, :])
         )

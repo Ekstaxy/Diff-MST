@@ -8,12 +8,15 @@ trainer:
       project: DiffMST_Retrain
       # change to the directory where you want to save wandb logs
       save_dir: /work/ajchen2005
+      name: Text_Integrated_DiffMST_First_Run
+      log_model: true
+      notes: "This is the first run of the Text-Integrated DiffMST model. With self-generated text data."
   enable_checkpointing: true
   callbacks:
     - class_path: mst.callbacks.audio.LogAudioCallback
       init_args:
         use_separate_tracks: false
-        num_batches: 4  # Decrease this number to save fewer audio files during each validation run
+        num_batches: 2  # Decrease this number to save fewer audio files during each validation run
     - class_path: pytorch_lightning.callbacks.ModelSummary
       init_args: 
         max_depth: 2
@@ -35,12 +38,12 @@ trainer:
   default_root_dir: null
   gradient_clip_val: 10.0
   devices: 1
-  check_val_every_n_epoch: 1
+  check_val_every_n_epoch: 2
   val_check_interval: 1.0
   limit_val_batches: 0.2
-  max_epochs: 500
+  max_epochs: 200
   # change to log less or more often to wandb
-  log_every_n_steps: 50
+  log_every_n_steps: 20
   accelerator: gpu
   strategy: ddp_find_unused_parameters_true
   sync_batchnorm: true
@@ -48,5 +51,5 @@ trainer:
   enable_model_summary: true
   num_sanity_val_steps: 1
   benchmark: true
-  accumulate_grad_batches: 1
+  accumulate_grad_batches: 2
   # reload_dataloaders_every_n_epochs: 1

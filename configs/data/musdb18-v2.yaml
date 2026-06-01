@@ -1,0 +1,19 @@
+data:
+  class_path: mst.dataloader.PairedMixDataModule
+  init_args:
+    data_dir: /work/ajchen2005/musdb18_processed_v2
+    metadata_file: ./data/musdb18-aug.yaml
+    length: 264600   # 20 seconds at 44.1 kHz
+    # min_tracks: 2
+    # max_tracks: 4
+    batch_size: 8
+    num_workers: 4
+    train_subset_ratio: 1.0
+    val_subset_ratio: 1.0
+    audio_drop_prob: 0.1
+    text_drop_prob: 0.1
+    # num_train_passes: 20
+    # num_val_passes: 4
+    # train_buffer_size_gb: 1.0
+    # val_buffer_size_gb: 0.25
+    # target_track_lufs_db: -48.0

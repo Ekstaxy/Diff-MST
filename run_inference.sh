@@ -7,9 +7,9 @@ PYTHONPATH=. python test/inference.py \
     --checkpoint "/work/ajchen2005/DiffMST_Retrain/gxuqbygb/checkpoints/epoch=151-step=22770.ckpt" \
     --clap_checkpoint "../music_audioset_epoch_15_esc_90.14.pt" \
     --tracks_path "/work/ajchen2005/test_songs/" \
-    --output_dir "/work/ajchen2005/inference_outputs_high_drop" \
-    --ref_input_type "text" \
-    --ito_target_type "text" \
+    --output_dir "/work/ajchen2005/inference_outputs_AB_test" \
+    --ref_input_type "audio" \
+    --ito_target_type "audio" \
     --tracks_start_idx 264600 \
     --ref_start_idx 264600 \
     --length 264600 \

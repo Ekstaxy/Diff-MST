@@ -521,11 +521,13 @@ class MultitrackDataModule(pl.LightningDataModule):
         )
     
 class PairedMixDataset(torch.utils.data.Dataset):
-    def __init__(self, data_dir: str, metadata_file: str, split: str = "train", length: int = 524288, subset_ratio: float = 1.0):
+    def __init__(self, data_dir: str, metadata_file: str, split: str = "train", length: int = 524288, subset_ratio: float = 1.0, audio_drop_prob: float = 0.1, text_drop_prob: float = 0.1):
         super().__init__()
         self.length = length
         self.data_dir = data_dir
         self.subset_ratio = subset_ratio  # 0.5 means 50%
+        self.audio_drop_prob = audio_drop_prob
+        self.text_drop_prob = text_drop_prob
         
         # 1. 讀取 YAML 決定哪些歌屬於這個 split (train 或 val)
         with open(metadata_file, 'r') as f:
@@ -533,24 +535,30 @@ class PairedMixDataset(torch.utils.data.Dataset):
         allowed_songs = meta.get(split, [])
         
         # 2. 掃描所有符合條件的 augmentations
-        self.all_samples = []  # Changed from self.samples to self.all_samples
+        self.all_samples = []
         for song in allowed_songs:
             song_dir = os.path.join(data_dir, song)
             if not os.path.isdir(song_dir):
                 continue
             
-            # 使用 glob 搜尋所有存在的 aug_*.pt
             param_files = glob.glob(os.path.join(song_dir, "aug_*_params.pt"))
             for pf in param_files:
-                base_name = os.path.basename(pf).replace("_params.pt", "") # 取得 "aug_0"
-                self.all_samples.append({  # Append to all_samples
+                base_name = os.path.basename(pf).replace("_params.pt", "") 
+                
+                # [修改 1]：檢查 Vocal 和 Instrumental 的 JSON 是否都存在
+                vocal_json = os.path.join(song_dir, f"{base_name}_compare_wet_dry_vocal.json")
+                inst_json = os.path.join(song_dir, f"{base_name}_compare_wet_dry_instrumental.json")
+                
+                if not (os.path.exists(vocal_json) and os.path.exists(inst_json)):
+                    continue
+                    
+                self.all_samples.append({
                     "song_name": song,
                     "song_dir": song_dir,
                     "base_name": base_name,
                     "param_path": pf
                 })
         
-        # Initialize samples with a random subset
         self.shuffle_and_subset()
 
     def shuffle_and_subset(self):
@@ -578,9 +586,9 @@ class PairedMixDataset(torch.utils.data.Dataset):
         # 1. Read Ground Truth 參數 (.pt)
         params = torch.load(sample["param_path"], weights_only=True)
         
-        # 2. Read Dry Tracks (Track Input)
-        dry_vocal_path = os.path.join(song_dir, f"{base_name}_dry_vocal.wav")
-        dry_inst_path = os.path.join(song_dir, f"{base_name}_dry_instrumental.wav")
+        # 2. Read Dry Tracks (Track Input) 從 V2 的 dry 子資料夾讀取
+        dry_vocal_path = os.path.join(song_dir, "dry", f"{base_name}_vocal.wav")
+        dry_inst_path = os.path.join(song_dir, "dry", f"{base_name}_instrumental.wav")
         
         dry_vocal, _ = torchaudio.load(dry_vocal_path)
         dry_inst, _ = torchaudio.load(dry_inst_path)
@@ -591,21 +599,82 @@ class PairedMixDataset(torch.utils.data.Dataset):
 
         tracks = torch.cat([dry_inst, dry_vocal], dim=0) # [Other, Vocal]
         
-        # 3. Read Source Separation Estimate (Refer Input)
-        vocals_est_path = os.path.join(song_dir, f"{base_name}_vocals_est.wav")
-        other_est_path = os.path.join(song_dir, f"{base_name}_other_est.wav")
+        # 3. Read Source Separation Estimate (Refer Input) 從 V2 的 src_sep 讀取
+        vocals_est_path = os.path.join(song_dir, "src_sep", f"{base_name}_vocal.wav")
+        other_est_path = os.path.join(song_dir, "src_sep", f"{base_name}_instrumental.wav")
         
         vocals_est, _ = torchaudio.load(vocals_est_path)
         other_est, _ = torchaudio.load(other_est_path)
         
-        if vocals_est.shape[0] > 1: vocals_est = vocals_est.mean(dim=0, keepdim=True)
-        if other_est.shape[0] > 1: other_est = other_est.mean(dim=0, keepdim=True)
+        # if vocals_est.shape[0] > 1: vocals_est = vocals_est.mean(dim=0, keepdim=True)
+        # if other_est.shape[0] > 1: other_est = other_est.mean(dim=0, keepdim=True)
         
         est_tracks = torch.cat([other_est, vocals_est], dim=0)
 
         # 4. Read Ground Truth Mix
         mix_path = os.path.join(song_dir, f"{base_name}_mix.wav")
         true_mix, _ = torchaudio.load(mix_path)
+        
+        # 5. Read Text Prompt
+        vocal_json_path = os.path.join(song_dir, f"{base_name}_compare_wet_dry_vocal.json")
+        inst_json_path = os.path.join(song_dir, f"{base_name}_compare_wet_dry_instrumental.json")
+
+        def load_and_sample_json(path):
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            
+            keys = ["gain", "pan", "compressor", "eq"]
+            
+            # [關鍵修改 1]：隨機決定這次要取用幾個效果器的描述 (1 到 1 個)
+            # num_traits_to_keep = random.randint(1, 2)
+            # 隨機抽取這些 keys
+            selected_keys = random.sample(keys, 1)
+            
+            parts = []
+            for k in selected_keys:
+                val = data.get(k, "").strip()
+                if val and val != "(no description generated)":
+                    # [關鍵修改 2]：移除句尾的句號，並把首字母轉小寫，讓句子更通順
+                    val = val.rstrip(".")
+                    if val:
+                        val = val[0].lower() + val[1:]
+                    parts.append(val)
+            
+            if not parts:
+                return ""
+                
+            # [關鍵修改 3]：用自然的連接詞合併 (A, B, and C)
+            if len(parts) == 1:
+                return parts[0]
+            elif len(parts) == 2:
+                return f"{parts[0]} and {parts[1]}"
+            else:
+                return ", ".join(parts[:-1]) + f", and {parts[-1]}"
+        
+        vocal_text = load_and_sample_json(vocal_json_path)
+        inst_text = load_and_sample_json(inst_json_path)
+
+        # 為了避免抽完剛好全是空字串導致出錯，給個預設值
+        vocal_text = vocal_text if vocal_text else "exactly as it is"
+        inst_text = inst_text if inst_text else "exactly as it is"
+
+        # (接下來的 template_choice 邏輯維持你原本的寫法即可)
+        template_choice = random.random()
+        if template_choice < 0.25:
+            text = f"Make the vocal {vocal_text}, and keep the instrumental {inst_text}."
+        elif template_choice < 0.50:
+            text = f"The vocal sounds {vocal_text}, while the instrumental is {inst_text}."
+        elif template_choice < 0.75:
+            text = f"Push the instrumental to be {inst_text}, and make sure the vocal is {vocal_text}."
+        elif template_choice < 0.90:
+            if random.random() > 0.5:
+                text = f"Just make the vocal {vocal_text}."
+            else:
+                text = f"I want the instrumental to be {inst_text}."
+        else:
+            text = f"Vocal is {vocal_text}. Instrumental is {inst_text}."
+
+        # print(f"Generated Text Prompt: {text}")
         
         # Helper to crop/pad
         def process(t, length, off):
@@ -625,13 +694,20 @@ class PairedMixDataset(torch.utils.data.Dataset):
         est_tracks = process(est_tracks, self.length, offset)[..., :self.length//2]
         true_mix = process(true_mix, self.length, offset)[..., self.length//2:self.length]
         
+        # --- Modality Dropout (Classifier-Free Guidance) ---
+        if random.random() < self.text_drop_prob:
+            text = ""  # Drop text condition
+            
+        if random.random() < self.audio_drop_prob:
+            est_tracks = torch.zeros_like(est_tracks)  # Drop audio condition
+        
         # 5. 給 system.py 的佔位符 (Dummy data)
         stereo_info = torch.tensor([0, 0])
         track_padding = torch.tensor([False, False])
         
-        # Return 7 items matching system.py unpacking:
-        # tracks, est_tracks, true_mix, stereo_info, track_padding, song_name, ref_params_dict
-        return tracks, est_tracks, true_mix, stereo_info, track_padding, song_name, params
+        # Return 8 items matching updated system.py unpacking:
+        # tracks, est_tracks, true_mix, stereo_info, track_padding, song_name, ref_params_dict, text
+        return tracks, est_tracks, true_mix, stereo_info, track_padding, song_name, params, text
 
 
 class PairedMixDataModule(pl.LightningDataModule):
@@ -641,9 +717,11 @@ class PairedMixDataModule(pl.LightningDataModule):
         metadata_file: str,
         length: int = 524288,
         batch_size: int = 32,
-        num_workers: int = 0,
+        num_workers: int = 4,
         train_subset_ratio: float = 1.0,
-        val_subset_ratio: float = 1.0
+        val_subset_ratio: float = 1.0,
+        audio_drop_prob: float = 0.1,
+        text_drop_prob: float = 0.1
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -654,14 +732,18 @@ class PairedMixDataModule(pl.LightningDataModule):
             metadata_file=self.hparams.metadata_file, 
             split="train", 
             length=self.hparams.length,
-            subset_ratio=self.hparams.train_subset_ratio
+            subset_ratio=self.hparams.train_subset_ratio,
+            audio_drop_prob=self.hparams.audio_drop_prob,
+            text_drop_prob=self.hparams.text_drop_prob
         )
         self.val_dataset = PairedMixDataset(
             data_dir=self.hparams.data_dir, 
             metadata_file=self.hparams.metadata_file, 
             split="val", 
             length=self.hparams.length,
-            subset_ratio=self.hparams.val_subset_ratio
+            subset_ratio=self.hparams.val_subset_ratio,
+            audio_drop_prob=self.hparams.audio_drop_prob,
+            text_drop_prob=self.hparams.text_drop_prob
         )
 
     def train_dataloader(self):
@@ -672,7 +754,7 @@ class PairedMixDataModule(pl.LightningDataModule):
         return torch.utils.data.DataLoader(self.train_dataset, batch_size=self.hparams.batch_size, num_workers=self.hparams.num_workers, shuffle=True, drop_last=True)
 
     def val_dataloader(self):
-        return torch.utils.data.DataLoader(self.val_dataset, batch_size=self.hparams.batch_size, num_workers=self.hparams.num_workers, shuffle=True)
+        return torch.utils.data.DataLoader(self.val_dataset, batch_size=self.hparams.batch_size, num_workers=self.hparams.num_workers, shuffle=False)
 
 
 # if __name__ == "__main__":

@@ -89,12 +89,22 @@ class LogAudioCallback(pl.callbacks.Callback):
             audio_keys.append(key)
             total_samples += x.shape[0]
 
-        y = torch.zeros(total_samples + int(len(audio_keys) * sample_rate), 2)
+        # determine the maximum number of channels across all audio logs
+        max_channels = max([x.shape[1] for x in audio_files])
+        
+        y = torch.zeros(total_samples + int(len(audio_keys) * sample_rate), max_channels)
         name = f"{batch_idx}_{sample_idx}"
         start = 0
         for x, key in zip(audio_files, audio_keys):
             end = start + x.shape[0]
-            y[start:end, :] = x
+            # Handle mismatch in channels by padding with zeros if x has fewer channels,
+            # or assigning directly if channels match. (Or duplicate mono to poly).
+            channels = x.shape[1]
+            if channels == 1 and max_channels > 1:
+                y[start:end, :max_channels] = x.repeat(1, max_channels)
+            else:
+                y[start:end, :channels] = x
+            
             start = end + int(sample_rate)
             name += key + "-"
 

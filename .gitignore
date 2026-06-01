@@ -19,3 +19,4 @@ data/FXencoder_ps.pt
 outputs/**
 .venv/
 *.pdf
+*.txt

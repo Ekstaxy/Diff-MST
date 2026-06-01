@@ -129,7 +129,8 @@ class System(pl.LightningModule):
             train (bool): Wether step is called during training (True) or validation (False).
         """
         if self.use_src_separation:
-            tracks, est_tracks, true_mix, stereo_info, track_padding, song_name, ref_params_dict = batch
+            # 支援 V2 DataLoader 給的第 8 個值：text
+            tracks, est_tracks, true_mix, stereo_info, track_padding, song_name, ref_params_dict, text = batch
             
             # ref_mix logic: est_tracks are 2 separate mono tracks (Other, Vocal)
             # The model takes them as "channels", so we keep them separated.
@@ -143,7 +144,7 @@ class System(pl.LightningModule):
                 pred_track_params,
                 pred_fx_bus_params,
                 pred_master_bus_params,
-            ) = self.model(tracks, ref_mix_a, track_padding_mask=track_padding)
+            ) = self.model(tracks, ref_mix_a, text=text, track_padding_mask=track_padding)
         else:
             tracks, instrument_id, stereo_info, track_padding, ref_mix, song_name, ref_params_dict = batch
         #print("song_names from this batch: ", song_name)
