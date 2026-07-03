@@ -528,6 +528,7 @@ class PairedMixDataset(torch.utils.data.Dataset):
         self.subset_ratio = subset_ratio  # 0.5 means 50%
         self.audio_drop_prob = audio_drop_prob
         self.text_drop_prob = text_drop_prob
+        self.split = split
         
         # 1. 讀取 YAML 決定哪些歌屬於這個 split (train 或 val)
         with open(metadata_file, 'r') as f:
@@ -659,20 +660,25 @@ class PairedMixDataset(torch.utils.data.Dataset):
         inst_text = inst_text if inst_text else "exactly as it is"
 
         # (接下來的 template_choice 邏輯維持你原本的寫法即可)
-        template_choice = random.random()
-        if template_choice < 0.25:
-            text = f"Make the vocal {vocal_text}, and keep the instrumental {inst_text}."
-        elif template_choice < 0.50:
-            text = f"The vocal sounds {vocal_text}, while the instrumental is {inst_text}."
-        elif template_choice < 0.75:
-            text = f"Push the instrumental to be {inst_text}, and make sure the vocal is {vocal_text}."
-        elif template_choice < 0.90:
-            if random.random() > 0.5:
-                text = f"Just make the vocal {vocal_text}."
+        if self.split == "train":
+            # 訓練時：隨機增強，幫助模型泛化
+            template_choice = random.random()
+            if template_choice < 0.25:
+                text = f"Make the vocal {vocal_text}, and keep the instrumental {inst_text}."
+            elif template_choice < 0.50:
+                text = f"The vocal sounds {vocal_text}, while the instrumental is {inst_text}."
+            elif template_choice < 0.75:
+                text = f"Push the instrumental to be {inst_text}, and make sure the vocal is {vocal_text}."
+            elif template_choice < 0.90:
+                if random.random() > 0.5:
+                    text = f"Just make the vocal {vocal_text}."
+                else:
+                    text = f"I want the instrumental to be {inst_text}."
             else:
-                text = f"I want the instrumental to be {inst_text}."
+                text = f"Vocal {vocal_text}. Instrumental {inst_text}."
         else:
-            text = f"Vocal is {vocal_text}. Instrumental is {inst_text}."
+            # 驗證時 (val / test)：固定使用同一種最標準的模板，確保每次評估的基準一模一樣！
+            text = f"Make the vocal {vocal_text}, and keep the instrumental {inst_text}."
 
         # print(f"Generated Text Prompt: {text}")
         

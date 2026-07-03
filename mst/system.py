@@ -10,7 +10,7 @@ from typing import Callable
 from mst.mixing import knowledge_engineering_mix
 from mst.utils import batch_stereo_peak_normalize, batch_stereo_tracks_peak_normalize
 from mst.fx_encoder import FXencoder
-from mst.modules import RoFormerRemixer, Remixer
+from mst.modules import RoFormerRemixer, Remixer, denormalize_parameters
 import pyloudnorm as pyln
 
 
@@ -329,10 +329,61 @@ class System(pl.LightningModule):
         # pred_mix_b = batch_stereo_peak_normalize(pred_mix_b)
 
 
-        if ref_track_param_dict is None:
+        if ref_params_dict is not None and "track_params" in ref_params_dict:
+            track_p = ref_params_dict["track_params"].to(tracks_b.device)
+            
+            # 2. 在 GPU 上瞬間完成切片，組合出字典
+            ref_track_param_dict = {
+                "input_fader": {"gain_db": track_p[..., 0:1]},
+                "parametric_eq": {
+                    "low_shelf_gain_db": track_p[..., 1:2],
+                    "low_shelf_cutoff_freq": track_p[..., 2:3],
+                    "low_shelf_q_factor": track_p[..., 3:4],
+                    "band0_gain_db": track_p[..., 4:5],
+                    "band0_cutoff_freq": track_p[..., 5:6],
+                    "band0_q_factor": track_p[..., 6:7],
+                    "band1_gain_db": track_p[..., 7:8],
+                    "band1_cutoff_freq": track_p[..., 8:9],
+                    "band1_q_factor": track_p[..., 9:10],
+                    "band2_gain_db": track_p[..., 10:11],
+                    "band2_cutoff_freq": track_p[..., 11:12],
+                    "band2_q_factor": track_p[..., 12:13],
+                    "band3_gain_db": track_p[..., 13:14],
+                    "band3_cutoff_freq": track_p[..., 14:15],
+                    "band3_q_factor": track_p[..., 15:16],
+                    "high_shelf_gain_db": track_p[..., 16:17],
+                    "high_shelf_cutoff_freq": track_p[..., 17:18],
+                    "high_shelf_q_factor": track_p[..., 18:19],
+                },
+                "compressor": {
+                    "threshold_db": track_p[..., 19:20],
+                    "ratio": track_p[..., 20:21],
+                    "attack_ms": track_p[..., 21:22],
+                    "release_ms": track_p[..., 22:23],
+                    "knee_db": track_p[..., 23:24],
+                    "makeup_gain_db": track_p[..., 24:25],
+                },
+                "stereo_panner": {"pan": track_p[..., 25:26]},
+                "fx_bus": {"send_db": track_p[..., 26:27]},
+            }
+            
+            # 把 Tensor 放到正確的 GPU 上
+            for effect in ref_track_param_dict.values():
+                for param in effect.keys():
+                    effect[param] = effect[param].to(tracks_b.device)
+            
+            # 2. 呼叫 MixConsole 幫我們把 0~1 解壓縮成真實物理單位 (dB, Hz 等)
+            # 這樣送進 WandB 表格時，_ref 和 _pred 的單位才會統一！
+            ref_track_param_dict = denormalize_parameters(
+                ref_track_param_dict, 
+                self.mix_console.param_ranges
+            )
+        else:
+            # 終極防呆
             ref_track_param_dict = pred_track_param_dict
-            ref_fx_bus_param_dict = pred_fx_bus_param_dict
-            ref_master_bus_param_dict = pred_master_bus_param_dict
+
+        ref_fx_bus_param_dict = pred_fx_bus_param_dict
+        ref_master_bus_param_dict = pred_master_bus_param_dict
 
         # ---------------------------- compute and log loss ------------------------------
 

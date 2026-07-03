@@ -1106,18 +1106,45 @@ class CLAPSequenceTextEncoder(torch.nn.Module):
         # 將 Tokenizer 包裝在內部，外部只要餵字串就好
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         
+        # 1. 永遠先載入模型架構 (建立一個 RoBERTa 空殼)
+        config = AutoConfig.from_pretrained(model_name)
+        self.model = AutoModel.from_config(config)
+        
+        # 2. 判斷是要 Finetune (有給 .pt) 還是 From Scratch (沒給 .pt)
         if ckpt_path is not None:
-            # 載入指定的 Checkpoint
-            self.model = AutoModel.from_pretrained(ckpt_path)
-            print(f"[CLAPSequenceTextEncoder] Loaded pretrained weights from {ckpt_path}")
-        else:
-            # 從指定的 model_name 載入（可選擇從 HuggingFace Hub 載入或隨機初始化）
-            # 這裡簡單處理：直接用這名字載入 config 並隨機初始化
-            config = AutoConfig.from_pretrained(model_name)
-            self.model = AutoModel.from_config(config)
-            print(f"[CLAPSequenceTextEncoder] Initialized fresh weights using config {model_name}")
+            print(f"[CLAPSequenceTextEncoder] Loading PyTorch checkpoint from {ckpt_path}...")
+            # 手動讀取 PyTorch 的 .pt 檔
+            ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
             
-        # 決定是否凍結模型參數
+            # 處理 .pt 可能的包裝結構 (有些模型會包在 'state_dict' 或 'model' 裡面)
+            state_dict = ckpt["state_dict"] if "state_dict" in ckpt else ckpt
+            state_dict = state_dict["model"] if "model" in state_dict else state_dict
+            
+            # 3. 過濾出屬於 Text Encoder 的權重
+            # 因為 CLAP 的 .pt 同時包含了 Audio 和 Text 的權重，我們只需要 Text 的部分
+            text_state_dict = {}
+            for k, v in state_dict.items():
+                # Music CLAP / LAION CLAP 的文字編碼器權重通常帶有 'text_branch.' 的前綴
+                if k.startswith("text_branch."):
+                    text_state_dict[k.replace("text_branch.", "")] = v
+                elif k.startswith("module.text_branch."):
+                    text_state_dict[k.replace("module.text_branch.", "")] = v
+                # 預防萬一：如果存的就是純 RoBERTa 權重
+                elif k.startswith("embeddings.") or k.startswith("encoder."):
+                    text_state_dict[k] = v
+            
+            # 4. 將過濾好的權重灌入空殼中 (strict=False 是因為我們不需要 CLAP 原本的 proj 層)
+            if len(text_state_dict) > 0:
+                missing, unexpected = self.model.load_state_dict(text_state_dict, strict=False)
+                print(f"[CLAPSequenceTextEncoder] ✅ 成功載入 Text 權重! (略過不批配的 keys: {len(missing)})")
+            else:
+                print("[CLAPSequenceTextEncoder] ⚠️ 找不到 text_branch 前綴，嘗試直接載入原始 state_dict...")
+                self.model.load_state_dict(state_dict, strict=False)
+        else:
+            # From Scratch 模式：什麼都不做，保留 AutoModel.from_config 產生的隨機亂數
+            print(f"[CLAPSequenceTextEncoder] 🌟 Initialized fresh weights (From Scratch) using config {model_name}")
+            
+        # 5. 決定是否凍結模型參數 (你的 Finetune 邏輯完美生效！)
         for param in self.model.parameters():
             param.requires_grad = finetune
             
@@ -1233,8 +1260,6 @@ class TransformerController(torch.nn.Module):
         nhead: int = 8,
         use_fx_bus: bool = False,
         use_master_bus: bool = False,
-        train_only_proj_layer: bool = False,
-        freeze_proj_layer: bool = False,
     ) -> None:
         """Transformer based Controller that predicts mix parameters given track and reference mix embeddings.
 
@@ -1245,7 +1270,6 @@ class TransformerController(torch.nn.Module):
             nhead (int): Number of attention heads in each layer.
             use_fx_bus (bool): Whether to use the FX bus.
             use_master_bus (bool): Whether to use the master bus.
-            train_only_proj_layer (bool): Whether to only train the projection layer.
         """
         super().__init__()
         self.embed_dim = embed_dim
@@ -1256,78 +1280,23 @@ class TransformerController(torch.nn.Module):
         self.nhead = nhead
         self.use_fx_bus = use_fx_bus
         self.use_master_bus = use_master_bus
-        self.train_only_proj_layer = train_only_proj_layer
-        
-        # ==========================================
-        # ⚠️ 【爭議區】特徵聚合器 (用來把多軌壓縮成 2 軌)
-        # ==========================================
-        # 創造兩個「探子」(Query)，一個負責收集左聲道情報，一個負責右聲道
-        self.mix_query = torch.nn.Parameter(torch.randn(1, 2, embed_dim))
-        
-        # 建立一個單層的 Transformer，作者把它命名為 proj_layer (這就是讓你誤會的元兇)
-        proj_layer = torch.nn.TransformerEncoderLayer(
-            d_model=embed_dim, nhead=8, batch_first=True, dropout=0.0
-        )
-        # 把上面那個單層複製 3 次，變成一個小型的 Transformer 網路
-        self.mix_transformer = torch.nn.TransformerEncoder(
-            proj_layer, 
-            num_layers=3
-        )
-        # 聚合完之後，再過一個線性層微調一下特徵
-        self.mix_adapter = torch.nn.Linear(embed_dim, embed_dim)
 
-        # ==========================================
-        # 🪪 【身分證區】可學習的 Positional/Role Embeddings
-        # ==========================================
-        # Transformer 本身沒有順序概念，所以要發身分證給不同種類的音軌，它才知道誰是誰
-        self.track_embedding = torch.nn.Parameter(torch.randn(1, 1, embed_dim))   # "我是待處理的目標音軌"
-        self.mix_embedding = torch.nn.Parameter(torch.randn(1, 4, embed_dim))     # "我是提供參考的聲道(支援到4軌)"
-        self.fx_bus_embedding = torch.nn.Parameter(torch.randn(1, 1, embed_dim))  # "我是效果器 Bus"
-        self.master_bus_embedding = torch.nn.Parameter(torch.randn(1, 1, embed_dim)) # "我是總線 Master Bus"
+        # Role embeddings (track / ref / fx bus / master bus)
+        self.track_embedding = torch.nn.Parameter(torch.randn(1, 1, embed_dim))
+        self.mix_embedding = torch.nn.Parameter(torch.randn(1, 4, embed_dim))
+        self.fx_bus_embedding = torch.nn.Parameter(torch.randn(1, 1, embed_dim))
+        self.master_bus_embedding = torch.nn.Parameter(torch.randn(1, 1, embed_dim))
 
-        # ==========================================
-        # 🧠 【主舞台】預測混音參數的核心 Transformer
-        # ==========================================
-        # 保留原版寫法當參考
-        # encoder_layer = torch.nn.TransformerEncoderLayer(
-        #     d_model=embed_dim, nhead=nhead, batch_first=True, dropout=0.0
-        # )
-        # self.transformer_encoder = torch.nn.TransformerEncoder(
-        #     encoder_layer,
-        #     num_layers=num_layers,
-        # )
-
-        # 改用我們特製的支援 Text-Cross Attention 區塊
         self.transformer_blocks = torch.nn.ModuleList([
             TrackTextControlBlock(embed_dim, nhead, dropout=0.0)
             for _ in range(num_layers)
         ])
 
-        # ==========================================
-        # 🎯 【輸出層】把 Transformer 的抽象特徵，轉換成實際的參數數值
-        # ==========================================
         self.track_projection = torch.nn.Linear(embed_dim, num_track_control_params)
         self.fx_bus_projection = torch.nn.Linear(embed_dim, num_fx_bus_control_params)
         self.master_bus_projection = torch.nn.Linear(
             embed_dim, num_master_bus_control_params
         )
-
-        # (以下是作者用來做實驗的開關：只訓練聚合器，或凍結聚合器)
-        if self.train_only_proj_layer:
-            for param in self.parameters():
-                param.requires_grad = False
-            for param in self.mix_transformer.parameters():
-                param.requires_grad = True
-            for param in self.mix_adapter.parameters():
-                param.requires_grad = True
-            self.mix_query.requires_grad = True
-        
-        if freeze_proj_layer:
-            for param in self.mix_transformer.parameters():
-                param.requires_grad = False
-            for param in self.mix_adapter.parameters():
-                param.requires_grad = False
-            self.mix_query.requires_grad = False
 
     def forward(
         self,
@@ -1351,48 +1320,6 @@ class TransformerController(torch.nn.Module):
         """
         bs, num_tracks, embed_dim = track_embeds.size()
 
-        # if mix_embeds.size(1) != 2:
-        #     # mix_embeds comes in as (bs, 2 * num_tracks, embed_dim)
-        #     flat_tracks = mix_embeds 
-        #     left_tracks = flat_tracks[:, :num_tracks, :] # (bs, num_tracks, embed_dim)
-        #     right_tracks = flat_tracks[:, num_tracks:, :] # (bs, num_tracks, embed_dim)
-
-        #     # 1. Prepare Queries (CLS tokens)
-        #     # Expand query to batch size: (bs, 1, embed_dim)
-        #     query_L = self.mix_query[:, 0:1, :].repeat(bs, 1, 1)
-        #     query_R = self.mix_query[:, 1:2, :].repeat(bs, 1, 1)
-
-        #     # 2. Construct Sequences: [Query, Track1, Track2, ...]
-        #     # Shape becomes (bs, num_tracks + 1, embed_dim)
-        #     input_L = torch.cat([query_L, left_tracks], dim=1)
-        #     input_R = torch.cat([query_R, right_tracks], dim=1)
-
-        #     # 3. Create Padding Mask
-        #     # We must prepend 'False' (unmasked) for the query token
-        #     if track_padding_mask is not None:
-        #         # track_padding_mask is (bs, num_tracks), True = Padded
-        #         # Create (bs, 1) of False
-        #         cls_mask = torch.zeros((bs, 1), dtype=torch.bool, device=track_embeds.device)
-                
-        #         # Concat: [False, mask_t1, mask_t2...]
-        #         mix_mask = torch.cat([cls_mask, track_padding_mask], dim=1)
-        #     else:
-        #         mix_mask = None
-
-        #     # 4. Pass through Transformer
-        #     # The Transformer allows tracks to attend to each other AND the query to attend to tracks
-        #     encoded_L = self.mix_transformer(input_L, src_key_padding_mask=mix_mask)
-        #     encoded_R = self.mix_transformer(input_R, src_key_padding_mask=mix_mask)
-
-        #     # 5. Extract the Query Token (Index 0)
-        #     # This token now contains the aggregated information
-        #     left_mix_embed = self.mix_adapter(encoded_L[:, 0:1, :]) 
-        #     right_mix_embed = self.mix_adapter(encoded_R[:, 0:1, :])    
-            
-        #     # Recombine to (bs, 2, embed_dim)
-        #     mix_embeds = torch.cat([left_mix_embed, right_mix_embed], dim=1)
-            
-        # apply learned embeddings to both input embeddings
         track_embeds = track_embeds + self.track_embedding.repeat(bs, num_tracks, 1)
         mix_embeds = mix_embeds + self.mix_embedding[:, :mix_embeds.size(1), :].repeat(bs, 1, 1)
 

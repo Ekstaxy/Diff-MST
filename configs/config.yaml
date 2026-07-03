@@ -8,15 +8,33 @@ trainer:
       project: DiffMST_Retrain
       # change to the directory where you want to save wandb logs
       save_dir: /work/ajchen2005
-      name: Text_Integrated_DiffMST_First_Run
-      log_model: true
-      notes: "This is the first run of the Text-Integrated DiffMST model. With self-generated text data."
+      name: Text_Only_DiffMST_Finetune_3_layers_v2
+      log_model: false
+      notes: "This is the second run of the Text-Only DiffMST model. With self-generated text data and CLAP finetuning. 3 layers of transformer controller."
+      # id: "1bm1am1y"
+      # resume: "allow"
   enable_checkpointing: true
   callbacks:
     - class_path: mst.callbacks.audio.LogAudioCallback
       init_args:
         use_separate_tracks: false
-        num_batches: 2  # Decrease this number to save fewer audio files during each validation run
+        num_batches: 1  # Decrease this number to save fewer audio files during each validation run
+    - class_path: pytorch_lightning.callbacks.ModelCheckpoint
+      init_args:
+        every_n_epochs: 5
+        save_top_k: 1
+        save_last: false
+        monitor: val/loss
+        mode: min
+        filename: "epoch-{epoch:03d}-step-{step}"
+        auto_insert_metric_name: false
+    - class_path: pytorch_lightning.callbacks.ModelCheckpoint
+      init_args:
+        every_n_epochs: 5
+        save_top_k: 0
+        save_last: true
+        filename: "epoch-{epoch:03d}-step-{step}"
+        auto_insert_metric_name: false
     - class_path: pytorch_lightning.callbacks.ModelSummary
       init_args: 
         max_depth: 2
@@ -38,10 +56,10 @@ trainer:
   default_root_dir: null
   gradient_clip_val: 10.0
   devices: 1
-  check_val_every_n_epoch: 2
+  check_val_every_n_epoch: 1
   val_check_interval: 1.0
   limit_val_batches: 0.2
-  max_epochs: 200
+  max_epochs: 1000
   # change to log less or more often to wandb
   log_every_n_steps: 20
   accelerator: gpu
@@ -51,5 +69,6 @@ trainer:
   enable_model_summary: true
   num_sanity_val_steps: 1
   benchmark: true
-  accumulate_grad_batches: 2
+  accumulate_grad_batches: 8
   # reload_dataloaders_every_n_epochs: 1
+ 
